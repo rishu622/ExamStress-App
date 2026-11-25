@@ -46,7 +46,7 @@ def _check_role(role: str) -> None:
         raise HTTPException(status_code=400, detail=f'Role must be one of: {", ".join(ROLES)}.')
 
 
-def _create(db: Session, name: str, email: str, role: str, grade_class: str | None, password: str | None) -> tuple[User, str | None]:
+def create_account(db: Session, name: str, email: str, role: str, grade_class: str | None, password: str | None) -> tuple[User, str | None]:
     name = name.strip()
     if not name:
         raise HTTPException(status_code=400, detail='Name is required.')
@@ -89,7 +89,7 @@ def list_users(role: str | None = None, db: Session = Depends(get_db), _: User =
 
 @router.post('', status_code=201)
 def create_user(payload: CreateUserRequest, db: Session = Depends(get_db), actor: User = Depends(admin_only)):
-    user, temp_password = _create(db, payload.name, payload.email, payload.role, payload.grade_class, payload.password)
+    user, temp_password = create_account(db, payload.name, payload.email, payload.role, payload.grade_class, payload.password)
     audit.record(db, actor, 'user_created', user.id, {'role': user.role, 'email': user.email})
     db.commit()
     return {'user': user_public(user), 'temporary_password': temp_password}
@@ -118,7 +118,7 @@ async def import_users(file: UploadFile = File(...), db: Session = Depends(get_d
             continue
         try:
             with db.begin_nested():
-                user, temp = _create(db, row.get('name', ''), row.get('email', ''), row.get('role') or 'student',
+                user, temp = create_account(db, row.get('name', ''), row.get('email', ''), row.get('role') or 'student',
                                      row.get('grade_class') or row.get('class'), None)
             created.append({'name': user.name, 'email': user.email, 'role': user.role,
                             'grade_class': user.grade_class, 'temporary_password': temp})

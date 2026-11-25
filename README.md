@@ -13,6 +13,10 @@ Student wellbeing check-ins, anonymous peer support and a counselor early-warnin
 | **Counselor** | Counselor Dashboard, Peer Support Chat, School Overview, My Account | See students by pseudonymous ID with zones and trends, receive alerts, reveal a student's identity (with a logged reason), log contacts and notes, escalate and resolve, read and join peer chats, export reports |
 | **Administrator** | Counselor Dashboard, School Administration, My Account | Everything counselors see except chats, plus: create accounts or bulk-import them from CSV, reset passwords, deactivate or permanently delete accounts, school settings (zone thresholds, helpline text, alert e-mails, data retention), audit log |
 
+**Getting an account:** students can tap **Create account** on the sign-in screen. Self sign-up only ever creates *student* accounts. The administrator can require a school join code and/or a school e-mail domain, or turn sign-up off (Settings → Student sign-up & guest access). Staff and peer mentors are always added by the administrator.
+
+**Guest mode:** **Continue as guest** gives a private one-off check-in with tips and helplines. Nothing is saved, nobody is alerted, and guests cannot use peer chat or see any data.
+
 ## How scoring works
 
 Each check-in gets a wellbeing score from 0 (needs urgent support) to 100 (doing well):
@@ -67,6 +71,7 @@ Lost the only admin password? Run `python -m backend.manage reset-password --ema
 
 ## Before going live: checklist
 
+- [ ] Set a **school join code** and/or your **school e-mail domain** for student sign-up. Otherwise anyone, including adults outside the school, can register as a student and message peer mentors.
 - [ ] Verify the crisis helpline numbers in **Settings → Help shown to students** are correct for your region.
 - [ ] Agree with the school who responds to alerts, how quickly, and outside school hours. ExamStress alerts are not monitored automatically.
 - [ ] Configure SMTP so critical alerts reach counselors who are not looking at the dashboard.

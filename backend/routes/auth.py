@@ -1,14 +1,19 @@
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.auth import (
-    create_access_token, get_current_user, hash_password, login_limiter, validate_new_password, verify_password,
+    create_access_token, get_current_user, hash_password, login_limiter, signup_limiter, validate_new_password,
+    verify_password,
 )
 from backend.common import user_public
 from backend.database import get_db
 from backend.models import User, utcnow
+from backend.routes.users import create_account
 from backend.services import audit
+from backend.services.app_settings import get_settings, signup_domains
 
 router = APIRouter()
 
@@ -42,6 +47,54 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     login_limiter.reset(request, email)
     user.last_login_at = utcnow()
     audit.record(db, user, 'login')
+    db.commit()
+    return {'token': create_access_token(user), 'user': user_public(user)}
+
+
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    grade_class: str | None = None
+    join_code: str | None = None
+
+
+@router.get('/public-config')
+def public_config(db: Session = Depends(get_db)):
+    """Unauthenticated: what the sign-in screen and guest mode need to know."""
+    values = get_settings(db)
+    return {
+        'school_name': values['school_name'],
+        'helpline_text': values['helpline_text'],
+        'counselor_contact_text': values['counselor_contact_text'],
+        'signup_enabled': values['self_signup_enabled'],
+        'signup_code_required': bool(values['signup_code'].strip()),
+        'signup_email_domains': signup_domains(values),
+        'guest_enabled': values['guest_access_enabled'],
+    }
+
+
+@router.post('/signup', status_code=201)
+def signup(payload: SignupRequest, request: Request, db: Session = Depends(get_db)):
+    values = get_settings(db)
+    if not values['self_signup_enabled']:
+        raise HTTPException(status_code=403, detail='Self sign-up is turned off. Please ask your school for an account.')
+    signup_limiter.check(request, 'signup')
+    signup_limiter.record_failure(request, 'signup')  # counts every attempt
+
+    expected_code = values['signup_code'].strip()
+    if expected_code and not secrets.compare_digest((payload.join_code or '').strip().lower(), expected_code.lower()):
+        raise HTTPException(status_code=400, detail='That school join code is not correct. Ask your teacher or counselor for it.')
+
+    domains = signup_domains(values)
+    email_domain = payload.email.strip().lower().rsplit('@', 1)[-1]
+    if domains and email_domain not in domains:
+        raise HTTPException(status_code=400, detail=f'Please use your school e-mail address ({" or ".join("@" + d for d in domains)}).')
+
+    user, _ = create_account(db, payload.name, payload.email, 'student', payload.grade_class, payload.password)
+    user.must_change_password = False
+    user.last_login_at = utcnow()
+    audit.record(db, user, 'self_signup', user.id)
     db.commit()
     return {'token': create_access_token(user), 'user': user_public(user)}
 

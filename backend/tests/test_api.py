@@ -297,3 +297,52 @@ def test_delete_student_cascades(client, world):
     assert client.delete(f"/api/users/{crisis['id']}", headers=a).status_code == 200
     assert client.get(f"/api/students/{crisis['id']}", headers=auth(world['counselor'])).status_code == 404
     assert all(al['student_id'] != crisis['id'] for al in client.get('/api/alerts?status=all', headers=auth(world['counselor'])).json()['alerts'])
+
+
+def test_self_signup(client, world):
+    from backend.auth import signup_limiter
+    a = auth(world['admin'])
+    cfg = client.get('/api/auth/public-config').json()
+    assert cfg['signup_enabled'] is True and cfg['guest_enabled'] is True
+
+    r = client.post('/api/auth/signup', json={'name': 'Self Made', 'email': 'self@school.test', 'password': 'Secret1234', 'grade_class': '9-C'})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body['user']['role'] == 'student' and body['user']['must_change_password'] is False
+    assert body['user']['anon_id'].startswith('S-')
+    assert client.get('/api/me/summary', headers=auth(body['token'])).status_code == 200
+    # Can sign in later with the chosen password; duplicate e-mail is rejected; weak password rejected
+    login(client, 'self@school.test', 'Secret1234')
+    assert client.post('/api/auth/signup', json={'name': 'X', 'email': 'self@school.test', 'password': 'Secret1234'}).status_code == 409
+    assert client.post('/api/auth/signup', json={'name': 'X', 'email': 'weak@school.test', 'password': 'short'}).status_code == 400
+    # Role cannot be smuggled in
+    r = client.post('/api/auth/signup', json={'name': 'Sneaky', 'email': 'sneaky@school.test', 'password': 'Secret1234', 'role': 'admin'})
+    assert r.json()['user']['role'] == 'student'
+
+    # Join code + domain restrictions
+    client.put('/api/settings', headers=a, json={'signup_code': 'Owl-2026', 'signup_email_domains': 'school.test'})
+    cfg = client.get('/api/auth/public-config').json()
+    assert cfg['signup_code_required'] is True and 'signup_code' not in cfg
+    assert client.post('/api/auth/signup', json={'name': 'Y', 'email': 'y@school.test', 'password': 'Secret1234', 'join_code': 'wrong'}).status_code == 400
+    assert client.post('/api/auth/signup', json={'name': 'Y', 'email': 'y@gmail.com', 'password': 'Secret1234', 'join_code': 'owl-2026'}).status_code == 400
+    assert client.post('/api/auth/signup', json={'name': 'Y', 'email': 'y@school.test', 'password': 'Secret1234', 'join_code': 'owl-2026'}).status_code == 201
+    assert client.put('/api/settings', headers=a, json={'signup_email_domains': 'not a domain'}).status_code == 400
+
+    client.put('/api/settings', headers=a, json={'self_signup_enabled': False, 'signup_code': '', 'signup_email_domains': ''})
+    assert client.post('/api/auth/signup', json={'name': 'Z', 'email': 'z@school.test', 'password': 'Secret1234'}).status_code == 403
+    client.put('/api/settings', headers=a, json={'self_signup_enabled': True})
+    signup_limiter._failures.clear()
+
+
+def test_guest_checkin(client, world):
+    r = client.post('/api/guest/checkin', json={'mood': 5, 'stress': 1, 'sleep': 5})
+    assert r.status_code == 200 and r.json()['score'] == 100 and r.json()['crisis'] is False
+    before = client.get('/api/alerts?status=all', headers=auth(world['counselor'])).json()['alerts']
+    r = client.post('/api/guest/checkin', json={'mood': 1, 'stress': 5, 'sleep': 1, 'note_text': 'I want to die'}).json()
+    assert r['crisis'] is True and 'nobody at school has been told' in r['tips'][0]['text']
+    after = client.get('/api/alerts?status=all', headers=auth(world['counselor'])).json()['alerts']
+    assert len(after) == len(before)  # nothing stored, nobody alerted
+    assert client.post('/api/guest/checkin', json={'mood': 9, 'stress': 1, 'sleep': 1}).status_code == 422
+    client.put('/api/settings', headers=auth(world['admin']), json={'guest_access_enabled': False})
+    assert client.post('/api/guest/checkin', json={'mood': 3, 'stress': 3, 'sleep': 3}).status_code == 403
+    client.put('/api/settings', headers=auth(world['admin']), json={'guest_access_enabled': True})

@@ -10,9 +10,10 @@ import { PeerChatPage } from './pages/PeerChatPage';
 import { AdminPage } from './pages/AdminPage';
 import { StudentPortalPage } from './pages/StudentPortalPage';
 import { AccountPage } from './pages/AccountPage';
+import { GuestPage } from './pages/GuestPage';
 
 const MainLayout: React.FC = () => {
-  const { user, authLoading, activePage } = useApp();
+  const { user, authLoading, activePage, isGuest } = useApp();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -23,7 +24,7 @@ const MainLayout: React.FC = () => {
       </div>
     );
   }
-  if (!user) return <LoginPage />;
+  if (!user) return isGuest ? <GuestPage /> : <LoginPage />;
   if (user.must_change_password) return <ChangePasswordPage forced />;
 
   const page = (() => {

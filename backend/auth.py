@@ -126,3 +126,6 @@ class LoginRateLimiter:
 
 
 login_limiter = LoginRateLimiter()
+# Generous because a whole class may sign up from one school network address.
+signup_limiter = LoginRateLimiter(max_attempts=40, window_seconds=60 * 60)
+guest_limiter = LoginRateLimiter(max_attempts=30, window_seconds=10 * 60)

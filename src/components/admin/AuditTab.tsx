@@ -10,6 +10,7 @@ const ACTIONS: Record<string, string> = {
   password_changed: 'Changed password',
   password_reset: 'Password reset',
   user_created: 'Created account',
+  self_signup: 'Student signed up',
   users_imported: 'Imported accounts',
   user_updated: 'Updated account',
   user_deleted: 'Deleted account',

@@ -28,6 +28,8 @@ interface AppContextType {
   logout: () => void;
   applySession: (token: string, user: User) => void;
   updateUser: (user: User) => void;
+  isGuest: boolean;
+  setGuest: (guest: boolean) => void;
 
   activePage: ActivePage;
   setActivePage: (page: ActivePage) => void;
@@ -77,6 +79,7 @@ const readDarkPreference = () => {
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [isGuest, setGuest] = useState(false);
   const [authLoading, setAuthLoading] = useState<boolean>(!!getToken());
   const [activePage, setActivePageState] = useState<ActivePage>(readHashPage() ?? 'dashboard');
   const [darkMode, setDarkMode] = useState<boolean>(readDarkPreference);
@@ -160,6 +163,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const applySession = useCallback((token: string, nextUser: User) => {
     setToken(token);
     setUser(nextUser);
+    setGuest(false);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
@@ -218,6 +222,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logout,
     applySession,
     updateUser: setUser,
+    isGuest,
+    setGuest,
     activePage,
     setActivePage,
     darkMode,
@@ -239,7 +245,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     toasts,
     notify,
     dismissToast,
-  }), [user, authLoading, login, logout, applySession, activePage, setActivePage, darkMode, publicSettings,
+  }), [user, isGuest, authLoading, login, logout, applySession, activePage, setActivePage, darkMode, publicSettings,
     refreshPublicSettings, alerts, unreadAlertCount, refreshAlerts, markAlertRead, markAllAlertsRead, resolveAlert,
     selectedStudentId, searchQuery, dataVersion, toasts, notify, dismissToast]);
 

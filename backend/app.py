@@ -13,7 +13,7 @@ from backend.common import user_public
 from backend.config import settings, validate_production_settings
 from backend.database import Base, SessionLocal, engine
 from backend.models import User
-from backend.routes import admin, alerts, auth, chat, me, students, users
+from backend.routes import admin, alerts, auth, chat, guest, me, students, users
 from backend.services.retention import purge_expired
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
@@ -96,6 +96,7 @@ app.include_router(users.router, prefix='/api/users', tags=['users'])
 app.include_router(students.router, prefix='/api/students', tags=['students'])
 app.include_router(alerts.router, prefix='/api/alerts', tags=['alerts'])
 app.include_router(chat.router, prefix='/api/chat', tags=['chat'])
+app.include_router(guest.router, prefix='/api/guest', tags=['guest'])
 app.include_router(admin.router, prefix='/api', tags=['admin'])
 
 

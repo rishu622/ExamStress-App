@@ -22,7 +22,27 @@ export interface PublicSettings {
   counselor_contact_text: string;
 }
 
+export interface PublicConfig extends PublicSettings {
+  signup_enabled: boolean;
+  signup_code_required: boolean;
+  signup_email_domains: string[];
+  guest_enabled: boolean;
+}
+
+export interface GuestResult {
+  score: number;
+  crisis: boolean;
+  tips: Tip[];
+  helpline_text: string;
+  counselor_contact_text: string;
+  low: boolean;
+}
+
 export interface SchoolSettings extends PublicSettings {
+  self_signup_enabled: boolean;
+  signup_code: string;
+  signup_email_domains: string;
+  guest_access_enabled: boolean;
   threshold_green_min: number;
   threshold_yellow_min: number;
   threshold_orange_min: number;

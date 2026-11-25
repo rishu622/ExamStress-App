@@ -20,10 +20,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         'In an emergency call 112.'
     ),
     'counselor_contact_text': 'Visit the school counselor\'s office, or ask any teacher to contact them for you.',
+    # Students may create their own accounts (staff accounts are always created by an admin).
+    'self_signup_enabled': True,
+    'signup_code': '',  # if set, students must enter this school join code to sign up
+    'signup_email_domains': '',  # if set, e.g. "school.edu,students.school.edu", only these e-mail domains may sign up
+    'guest_access_enabled': True,
 }
 
 INT_KEYS = {'threshold_green_min', 'threshold_yellow_min', 'threshold_orange_min', 'data_retention_days'}
-BOOL_KEYS = {'email_alerts_enabled'}
+BOOL_KEYS = {'email_alerts_enabled', 'self_signup_enabled', 'guest_access_enabled'}
 
 
 def get_settings(db: Session) -> dict[str, Any]:
@@ -42,6 +47,13 @@ def validate_settings(values: dict[str, Any]) -> None:
         raise ValueError('Data retention must be between 7 and 3650 days.')
     if not str(values['school_name']).strip():
         raise ValueError('School name cannot be empty.')
+    for domain in signup_domains(values):
+        if '.' not in domain or ' ' in domain or '@' in domain:
+            raise ValueError(f'"{domain}" is not a valid e-mail domain (use e.g. school.edu).')
+
+
+def signup_domains(values: dict[str, Any]) -> list[str]:
+    return [d.strip().lower().lstrip('@') for d in str(values.get('signup_email_domains', '')).split(',') if d.strip()]
 
 
 def update_settings(db: Session, changes: dict[str, Any]) -> dict[str, Any]:

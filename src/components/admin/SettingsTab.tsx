@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Save, Loader2, Mail, Sliders, ShieldCheck, LifeBuoy, School, Trash2 } from 'lucide-react';
+import { Save, Loader2, Mail, Sliders, ShieldCheck, LifeBuoy, School, Trash2, UserPlus } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { api, errorMessage } from '../../lib/api';
 import type { SchoolSettings } from '../../types';
@@ -67,6 +67,31 @@ export const SettingsTab: React.FC = () => {
       <Section icon={School} title="School">
         <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">School name
           <input value={values.school_name} onChange={e => set('school_name', e.target.value)} required className={`${inputClass} mt-1`} />
+        </label>
+      </Section>
+
+      <Section icon={UserPlus} title="Student sign-up & guest access">
+        <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
+          <input type="checkbox" checked={values.self_signup_enabled} onChange={e => set('self_signup_enabled', e.target.checked)} className="w-4 h-4 accent-brand-blue" />
+          Let students create their own accounts
+        </label>
+        {values.self_signup_enabled && !values.signup_code.trim() && !values.signup_email_domains.trim() && (
+          <p className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-xs text-amber-900 dark:text-amber-100">
+            <strong>Anyone on the internet can currently sign up as a student</strong>, including adults who are not at your school. They could then message peer mentors. Set a join code and/or restrict sign-up to your school e-mail domain.
+          </p>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">School join code <span className="font-normal text-slate-400">(optional)</span>
+            <input value={values.signup_code} onChange={e => set('signup_code', e.target.value)} placeholder="e.g. GREENFIELD-2026" className={`${inputClass} mt-1`} />
+          </label>
+          <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">Allowed e-mail domains <span className="font-normal text-slate-400">(optional)</span>
+            <input value={values.signup_email_domains} onChange={e => set('signup_email_domains', e.target.value)} placeholder="e.g. school.edu, students.school.edu" className={`${inputClass} mt-1`} />
+          </label>
+        </div>
+        <p className="text-xs text-slate-500">Sign-up only ever creates student accounts. Staff and peer mentors must be added under Users.</p>
+        <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
+          <input type="checkbox" checked={values.guest_access_enabled} onChange={e => set('guest_access_enabled', e.target.checked)} className="w-4 h-4 accent-brand-blue" />
+          Allow guest mode (a private check-in without an account; nothing is saved and no one is alerted)
         </label>
       </Section>
 
