@@ -1,5 +1,5 @@
 import React from 'react';
-import { RiskZone } from '../../types';
+import type { RiskZone } from '../../types';
 
 interface RiskScoreRingProps {
   score: number;

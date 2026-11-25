@@ -1,15 +1,13 @@
 fastapi==0.115.0
-uvicorn==0.30.6
-python-multipart==0.0.1
+uvicorn[standard]==0.30.6
+python-multipart==0.0.12
 sqlalchemy==2.0.35
 pydantic==2.9.2
 pydantic-settings==2.5.2
 python-dotenv==1.0.1
-passlib[bcrypt]==1.7.4
+bcrypt==4.2.0
 PyJWT==2.10.1
-
-# AI/Audio processing for the MVP demo pipeline
 numpy==2.1.2
 
-# Optional transcription integration. Install manually in an environment with build tools if needed.
-# faster-whisper==1.0.2
+# PostgreSQL driver (used when DATABASE_URL points at Postgres)
+psycopg[binary]==3.2.3

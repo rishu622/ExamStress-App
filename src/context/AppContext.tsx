@@ -1,352 +1,254 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import {
-  UserRole,
-  Student,
-  Alert,
-  RiskZone,
-  VoiceSample,
-  SchoolSettings,
-  PeerConversation,
-  PeerChatMessage
-} from '../types';
-import {
-  MOCK_STUDENTS,
-  MOCK_ALERTS,
-  MOCK_VOICE_SAMPLES,
-  MOCK_PEER_CONVERSATIONS,
-  MOCK_PEER_MESSAGES,
-  INITIAL_SCHOOL_SETTINGS
-} from '../mock/mockData';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type { Alert, PublicSettings, User, UserRole } from '../types';
+import { api, getToken, setToken, setUnauthorizedHandler } from '../lib/api';
 
-export type ActivePage = 'dashboard' | 'simulator' | 'peer-chat' | 'admin' | 'student-portal' | 'settings';
+export type ActivePage = 'dashboard' | 'peer-chat' | 'admin' | 'student-portal' | 'account';
+
+export const PAGE_ROLES: Record<ActivePage, UserRole[]> = {
+  dashboard: ['counselor', 'admin'],
+  admin: ['admin', 'counselor'],
+  'peer-chat': ['student', 'peer-mentor', 'counselor'],
+  'student-portal': ['student'],
+  account: ['student', 'peer-mentor', 'counselor', 'admin'],
+};
+
+const HOME_PAGE: Record<UserRole, ActivePage> = {
+  counselor: 'dashboard',
+  admin: 'admin',
+  'peer-mentor': 'peer-chat',
+  student: 'student-portal',
+};
+
+type Toast = { id: number; kind: 'success' | 'error' | 'info'; text: string };
 
 interface AppContextType {
-  // Authentication & Role
-  userRole: UserRole;
-  setUserRole: (role: UserRole) => void;
-  isAuthenticated: boolean;
-  setIsAuthenticated: (val: boolean) => void;
-  loginAsDemo: (role?: UserRole) => void;
+  user: User | null;
+  authLoading: boolean;
+  login: (email: string, password: string) => Promise<User>;
   logout: () => void;
+  applySession: (token: string, user: User) => void;
+  updateUser: (user: User) => void;
 
-  // Navigation
   activePage: ActivePage;
   setActivePage: (page: ActivePage) => void;
 
-  // Dark Mode
   darkMode: boolean;
-  setDarkMode: (dark: boolean) => void;
   toggleDarkMode: () => void;
 
-  // Student Data & Filtering
-  students: Student[];
-  selectedStudent: Student | null;
-  setSelectedStudent: (student: Student | null) => void;
-  selectedZoneFilter: RiskZone | 'all';
-  setSelectedZoneFilter: (zone: RiskZone | 'all') => void;
-  searchQuery: string;
-  setSearchQuery: (query: string) => void;
+  publicSettings: PublicSettings | null;
+  refreshPublicSettings: () => void;
 
-  // Actions on Student
-  revealStudentIdentity: (studentId: string) => void;
-  markStudentContacted: (studentId: string, noteText: string) => void;
-  escalateStudentToRed: (studentId: string, reason: string) => void;
-
-  // Alerts
   alerts: Alert[];
   unreadAlertCount: number;
-  markAlertRead: (alertId: string) => void;
-  markAllAlertsRead: () => void;
-  addAlert: (alert: Omit<Alert, 'id' | 'timestamp' | 'read'>) => void;
+  refreshAlerts: () => Promise<void>;
+  markAlertRead: (id: string) => Promise<void>;
+  markAllAlertsRead: () => Promise<void>;
+  resolveAlert: (id: string) => Promise<void>;
 
-  // Simulator
-  activeVoiceSample: VoiceSample | null;
-  setActiveVoiceSample: (sample: VoiceSample | null) => void;
+  // Dashboard → detail modal + search shared with the top bar
+  selectedStudentId: string | null;
+  setSelectedStudentId: (id: string | null) => void;
+  searchQuery: string;
+  setSearchQuery: (q: string) => void;
+  dataVersion: number;
+  bumpDataVersion: () => void;
 
-  // Peer Chat
-  conversations: PeerConversation[];
-  activeConversationId: string;
-  setActiveConversationId: (id: string) => void;
-  messages: Record<string, PeerChatMessage[]>;
-  sendMessage: (convId: string, text: string, isVoice?: boolean, durationSec?: number) => void;
-  triggerCrisisEscalation: (convId: string) => void;
-
-  // Settings
-  settings: SchoolSettings;
-  updateSettings: (newSettings: Partial<SchoolSettings>) => void;
+  toasts: Toast[];
+  notify: (text: string, kind?: Toast['kind']) => void;
+  dismissToast: (id: number) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+const readHashPage = (): ActivePage | null => {
+  const value = window.location.hash.replace(/^#\/?/, '');
+  return (Object.keys(PAGE_ROLES) as ActivePage[]).includes(value as ActivePage) ? (value as ActivePage) : null;
+};
+
+const readDarkPreference = () => {
+  try {
+    const stored = localStorage.getItem('examstress.dark');
+    if (stored !== null) return stored === '1';
+  } catch {
+    /* ignore */
+  }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [userRole, setUserRole] = useState<UserRole>('counselor');
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true); // Default true for frictionless demo
-  const [activePage, setActivePage] = useState<ActivePage>('dashboard');
-  const [darkMode, setDarkMode] = useState<boolean>(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(!!getToken());
+  const [activePage, setActivePageState] = useState<ActivePage>(readHashPage() ?? 'dashboard');
+  const [darkMode, setDarkMode] = useState<boolean>(readDarkPreference);
+  const [publicSettings, setPublicSettings] = useState<PublicSettings | null>(null);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [unreadAlertCount, setUnreadAlertCount] = useState(0);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dataVersion, setDataVersion] = useState(0);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastId = useRef(0);
 
-  const [students, setStudents] = useState<Student[]>(MOCK_STUDENTS);
-  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [selectedZoneFilter, setSelectedZoneFilter] = useState<RiskZone | 'all'>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  const notify = useCallback((text: string, kind: Toast['kind'] = 'success') => {
+    const id = ++toastId.current;
+    setToasts(prev => [...prev, { id, kind, text }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), kind === 'error' ? 7000 : 4000);
+  }, []);
+  const dismissToast = useCallback((id: number) => setToasts(prev => prev.filter(t => t.id !== id)), []);
 
-  const [alerts, setAlerts] = useState<Alert[]>(MOCK_ALERTS);
-  const [activeVoiceSample, setActiveVoiceSample] = useState<VoiceSample | null>(MOCK_VOICE_SAMPLES[2]); // Depressed Arjun by default
-
-  const [conversations, setConversations] = useState<PeerConversation[]>(MOCK_PEER_CONVERSATIONS);
-  const [activeConversationId, setActiveConversationId] = useState<string>('conv-1');
-  const [messages, setMessages] = useState<Record<string, PeerChatMessage[]>>(MOCK_PEER_MESSAGES);
-
-  const [settings, setSettings] = useState<SchoolSettings>(INITIAL_SCHOOL_SETTINGS);
-
-  // Sync dark mode class with html root element
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
+    document.documentElement.classList.toggle('dark', darkMode);
+    try {
+      localStorage.setItem('examstress.dark', darkMode ? '1' : '0');
+    } catch {
+      /* ignore */
     }
   }, [darkMode]);
 
-  const toggleDarkMode = () => setDarkMode(prev => !prev);
+  const resetSession = useCallback(() => {
+    setToken(null);
+    setUser(null);
+    setAlerts([]);
+    setUnreadAlertCount(0);
+    setSelectedStudentId(null);
+    setSearchQuery('');
+  }, []);
 
-  const loginAsDemo = (role: UserRole = 'counselor') => {
-    setUserRole(role);
-    setIsAuthenticated(true);
-    if (role === 'counselor') setActivePage('dashboard');
-    else if (role === 'admin') setActivePage('admin');
-    else if (role === 'peer-mentor') setActivePage('peer-chat');
-    else if (role === 'student') setActivePage('student-portal');
-  };
-
-  const logout = () => {
-    setIsAuthenticated(false);
-  };
-
-  // Student Actions
-  const revealStudentIdentity = (studentId: string) => {
-    setStudents(prev =>
-      prev.map(s => (s.id === studentId ? { ...s, isIdentified: true } : s))
-    );
-    if (selectedStudent && selectedStudent.id === studentId) {
-      setSelectedStudent(prev => prev ? { ...prev, isIdentified: true } : null);
-    }
-  };
-
-  const markStudentContacted = (studentId: string, noteText: string) => {
-    const newNote = {
-      id: `n-${Date.now()}`,
-      timestamp: 'Just now',
-      counselorName: 'Dr. Sunita Rao',
-      note: noteText || 'Initiated counselor check-in with student.',
-      actionType: 'contact' as const,
-    };
-
-    setStudents(prev =>
-      prev.map(s => {
-        if (s.id === studentId) {
-          return {
-            ...s,
-            isContacted: true,
-            notes: [newNote, ...s.notes],
-          };
-        }
-        return s;
-      })
-    );
-
-    if (selectedStudent && selectedStudent.id === studentId) {
-      setSelectedStudent(prev =>
-        prev
-          ? {
-              ...prev,
-              isContacted: true,
-              notes: [newNote, ...prev.notes],
-            }
-          : null
-      );
-    }
-  };
-
-  const escalateStudentToRed = (studentId: string, reason: string) => {
-    const newNote = {
-      id: `n-${Date.now()}`,
-      timestamp: 'Just now',
-      counselorName: 'Dr. Sunita Rao',
-      note: `ESCALATED TO RED ZONE: ${reason}`,
-      actionType: 'escalate' as const,
-    };
-
-    setStudents(prev =>
-      prev.map(s => {
-        if (s.id === studentId) {
-          return {
-            ...s,
-            zone: 'red' as RiskZone,
-            riskScore: Math.min(s.riskScore, 22),
-            trendDirection: 'down' as const,
-            notes: [newNote, ...s.notes],
-          };
-        }
-        return s;
-      })
-    );
-
-    // Also trigger immediate high severity alert
-    addAlert({
-      studentId,
-      type: 'zone_shift',
-      zoneTo: 'red',
-      message: `Manual Counselor Escalation: Student ${studentId} flagged as Critical Red Zone (${reason}).`,
-      severity: 'critical',
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      resetSession();
+      notify('Your session has ended. Please sign in again.', 'info');
     });
+  }, [resetSession, notify]);
 
-    if (selectedStudent && selectedStudent.id === studentId) {
-      setSelectedStudent(prev =>
-        prev
-          ? {
-              ...prev,
-              zone: 'red' as RiskZone,
-              riskScore: Math.min(prev.riskScore, 22),
-              trendDirection: 'down',
-              notes: [newNote, ...prev.notes],
-            }
-          : null
-      );
+  // Keep the visible page valid for the signed-in role, and mirror it in the URL hash.
+  const setActivePage = useCallback((page: ActivePage) => {
+    setActivePageState(page);
+    if (window.location.hash !== `#/${page}`) window.location.hash = `/${page}`;
+  }, []);
+
+  useEffect(() => {
+    const onHash = () => {
+      const page = readHashPage();
+      if (page) setActivePageState(page);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  useEffect(() => {
+    if (user && !PAGE_ROLES[activePage].includes(user.role)) setActivePage(HOME_PAGE[user.role]);
+  }, [user, activePage, setActivePage]);
+
+  const refreshPublicSettings = useCallback(() => {
+    api.get<PublicSettings>('/api/settings/public').then(setPublicSettings).catch(() => undefined);
+  }, []);
+
+  // Restore the session after a page refresh.
+  useEffect(() => {
+    if (!getToken()) return;
+    api.get<User>('/api/auth/me')
+      .then(setUser)
+      .catch(() => resetSession())
+      .finally(() => setAuthLoading(false));
+  }, [resetSession]);
+
+  useEffect(() => {
+    if (user) refreshPublicSettings();
+  }, [user, refreshPublicSettings]);
+
+  const applySession = useCallback((token: string, nextUser: User) => {
+    setToken(token);
+    setUser(nextUser);
+  }, []);
+
+  const login = useCallback(async (email: string, password: string) => {
+    const data = await api.post<{ token: string; user: User }>('/api/auth/login', { email, password });
+    applySession(data.token, data.user);
+    setActivePage(readHashPage() && PAGE_ROLES[readHashPage()!].includes(data.user.role) ? readHashPage()! : HOME_PAGE[data.user.role]);
+    return data.user;
+  }, [applySession, setActivePage]);
+
+  const logout = useCallback(() => {
+    resetSession();
+    window.location.hash = '';
+  }, [resetSession]);
+
+  // ---------------------------------------------------------------- alerts (staff only)
+  const isStaff = !!user && !user.must_change_password && (user.role === 'counselor' || user.role === 'admin');
+
+  const refreshAlerts = useCallback(async () => {
+    if (!isStaff) return;
+    try {
+      const data = await api.get<{ alerts: Alert[]; unread_count: number }>('/api/alerts');
+      setAlerts(data.alerts);
+      setUnreadAlertCount(data.unread_count);
+    } catch {
+      /* polling failures are silent; the next poll retries */
     }
-  };
+  }, [isStaff]);
 
-  // Alerts
-  const unreadAlertCount = alerts.filter(a => !a.read).length;
+  useEffect(() => {
+    if (!isStaff) return;
+    refreshAlerts();
+    const interval = window.setInterval(refreshAlerts, 20000);
+    return () => window.clearInterval(interval);
+  }, [isStaff, refreshAlerts]);
 
-  const markAlertRead = (alertId: string) => {
-    setAlerts(prev => prev.map(a => (a.id === alertId ? { ...a, read: true } : a)));
-  };
+  const markAlertRead = useCallback(async (id: string) => {
+    await api.post(`/api/alerts/${id}/read`);
+    await refreshAlerts();
+  }, [refreshAlerts]);
 
-  const markAllAlertsRead = () => {
-    setAlerts(prev => prev.map(a => ({ ...a, read: true })));
-  };
+  const markAllAlertsRead = useCallback(async () => {
+    await api.post('/api/alerts/read-all');
+    await refreshAlerts();
+  }, [refreshAlerts]);
 
-  const addAlert = (alertData: Omit<Alert, 'id' | 'timestamp' | 'read'>) => {
-    const newAlert: Alert = {
-      ...alertData,
-      id: `alt-${Date.now()}`,
-      timestamp: 'Just now',
-      read: false,
-    };
-    setAlerts(prev => [newAlert, ...prev]);
-  };
+  const resolveAlert = useCallback(async (id: string) => {
+    await api.post(`/api/alerts/${id}/resolve`);
+    await refreshAlerts();
+    setDataVersion(v => v + 1);
+  }, [refreshAlerts]);
 
-  // Peer Chat
-  const sendMessage = (convId: string, text: string, isVoice = false, durationSec = 15) => {
-    const newMsg: PeerChatMessage = {
-      id: `m-${Date.now()}`,
-      conversationId: convId,
-      senderId: userRole === 'peer-mentor' ? 'mentor-1' : 'stud-4421',
-      senderRole: userRole === 'peer-mentor' ? 'peer-mentor' : 'student',
-      senderName: userRole === 'peer-mentor' ? 'Mental Health Ambassador (Class 12)' : 'Student #4421',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      text,
-      isVoice,
-      audioDurationSec: isVoice ? durationSec : undefined,
-    };
+  const value = useMemo<AppContextType>(() => ({
+    user,
+    authLoading,
+    login,
+    logout,
+    applySession,
+    updateUser: setUser,
+    activePage,
+    setActivePage,
+    darkMode,
+    toggleDarkMode: () => setDarkMode(prev => !prev),
+    publicSettings,
+    refreshPublicSettings,
+    alerts,
+    unreadAlertCount,
+    refreshAlerts,
+    markAlertRead,
+    markAllAlertsRead,
+    resolveAlert,
+    selectedStudentId,
+    setSelectedStudentId,
+    searchQuery,
+    setSearchQuery,
+    dataVersion,
+    bumpDataVersion: () => setDataVersion(v => v + 1),
+    toasts,
+    notify,
+    dismissToast,
+  }), [user, authLoading, login, logout, applySession, activePage, setActivePage, darkMode, publicSettings,
+    refreshPublicSettings, alerts, unreadAlertCount, refreshAlerts, markAlertRead, markAllAlertsRead, resolveAlert,
+    selectedStudentId, searchQuery, dataVersion, toasts, notify, dismissToast]);
 
-    setMessages(prev => ({
-      ...prev,
-      [convId]: [...(prev[convId] || []), newMsg],
-    }));
-
-    setConversations(prev =>
-      prev.map(c =>
-        c.id === convId
-          ? {
-              ...c,
-              lastMessage: isVoice ? `[Voice Note 0:${durationSec}] ${text}` : text,
-              lastTimestamp: 'Just now',
-            }
-          : c
-      )
-    );
-  };
-
-  const triggerCrisisEscalation = (convId: string) => {
-    const systemMsg: PeerChatMessage = {
-      id: `sys-${Date.now()}`,
-      conversationId: convId,
-      senderId: 'system',
-      senderRole: 'system',
-      senderName: 'ExamStress Crisis Escalation',
-      timestamp: 'Just now',
-      text: '⚠️ Immediate Help Request received. School Counselor Dr. Sunita Rao has been notified. National Crisis Helpline (1800-599-0019) is available 24/7.',
-    };
-
-    setMessages(prev => ({
-      ...prev,
-      [convId]: [...(prev[convId] || []), systemMsg],
-    }));
-
-    addAlert({
-      studentId: '#4421',
-      type: 'crisis_button',
-      zoneTo: 'red',
-      message: '🚨 CRISIS ESCALATION BUTTON TRIGGERED by Student #4421 in Anonymous Peer Chat.',
-      severity: 'critical',
-    });
-  };
-
-  const updateSettings = (newSettings: Partial<SchoolSettings>) => {
-    setSettings(prev => ({ ...prev, ...newSettings }));
-  };
-
-  return (
-    <AppContext.Provider
-      value={{
-        userRole,
-        setUserRole,
-        isAuthenticated,
-        setIsAuthenticated,
-        loginAsDemo,
-        logout,
-        activePage,
-        setActivePage,
-        darkMode,
-        setDarkMode,
-        toggleDarkMode,
-        students,
-        selectedStudent,
-        setSelectedStudent,
-        selectedZoneFilter,
-        setSelectedZoneFilter,
-        searchQuery,
-        setSearchQuery,
-        revealStudentIdentity,
-        markStudentContacted,
-        escalateStudentToRed,
-        alerts,
-        unreadAlertCount,
-        markAlertRead,
-        markAllAlertsRead,
-        addAlert,
-        activeVoiceSample,
-        setActiveVoiceSample,
-        conversations,
-        activeConversationId,
-        setActiveConversationId,
-        messages,
-        sendMessage,
-        triggerCrisisEscalation,
-        settings,
-        updateSettings,
-      }}
-    >
-      {children}
-    </AppContext.Provider>
-  );
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useApp = () => {
   const context = useContext(AppContext);
-  if (!context) {
-    throw new Error('useApp must be used within an AppProvider');
-  }
+  if (!context) throw new Error('useApp must be used within an AppProvider');
   return context;
 };

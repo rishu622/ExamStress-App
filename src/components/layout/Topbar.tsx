@@ -1,23 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { UserRole } from '../../types';
-import {
-  Bell,
-  Search,
-  Moon,
-  Sun,
-  Shield,
-  CheckCheck,
-  Calendar,
-  Sparkles,
-  AlertTriangle,
-  ShieldAlert
-} from 'lucide-react';
+import { timeAgo } from '../../lib/format';
+import { errorMessage } from '../../lib/api';
+import { Bell, Search, Moon, Sun, CheckCheck, AlertTriangle, ShieldAlert, Menu } from 'lucide-react';
 
-export const Topbar: React.FC = () => {
+export const Topbar: React.FC<{ onMenu: () => void }> = ({ onMenu }) => {
   const {
-    userRole,
-    setUserRole,
+    user,
     darkMode,
     toggleDarkMode,
     searchQuery,
@@ -26,144 +15,126 @@ export const Topbar: React.FC = () => {
     unreadAlertCount,
     markAlertRead,
     markAllAlertsRead,
-    setSelectedStudent,
-    students
+    setSelectedStudentId,
+    setActivePage,
+    activePage,
+    notify,
   } = useApp();
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const isStaff = user?.role === 'counselor' || user?.role === 'admin';
 
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
 
-  const formattedDate = new Date().toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  });
+  const openAlert = async (alertId: string, studentId: string | null) => {
+    try {
+      await markAlertRead(alertId);
+    } catch (err) {
+      notify(errorMessage(err), 'error');
+    }
+    if (studentId) {
+      setActivePage('dashboard');
+      setSelectedStudentId(studentId);
+    }
+    setOpen(false);
+  };
 
   return (
-    <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 flex items-center justify-between sticky top-0 z-30 shadow-xs">
-      {/* Left: Search & School Info */}
-      <div className="flex items-center gap-4 flex-1 max-w-md">
-        <div className="relative w-full">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search student ID, name, or class..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-xs md:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue dark:text-white transition"
-          />
-        </div>
+    <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 sm:px-6 flex items-center justify-between gap-3 sticky top-0 z-30 shadow-xs">
+      <div className="flex items-center gap-2 flex-1 min-w-0 max-w-md">
+        <button onClick={onMenu} className="lg:hidden p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Open menu">
+          <Menu className="w-5 h-5" />
+        </button>
+        {isStaff && activePage === 'dashboard' && (
+          <div className="relative w-full">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              placeholder="Search student ID or class…"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              aria-label="Search students"
+              className="w-full pl-9 pr-4 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue dark:text-white transition"
+            />
+          </div>
+        )}
       </div>
 
-      {/* Right: Date, Notifications, Theme, Quick Role Switcher */}
-      <div className="flex items-center gap-3">
-        {/* Date Display */}
-        <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 font-medium px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60">
-          <Calendar className="w-3.5 h-3.5 text-brand-blue" />
-          <span>{formattedDate}</span>
-        </div>
-
-        {/* Quick Role Switcher (For easy hackathon evaluation) */}
-        <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-          <span className="text-[10px] uppercase font-bold text-slate-400 px-2 hidden lg:inline">Role:</span>
-          {(['counselor', 'admin', 'peer-mentor', 'student'] as UserRole[]).map((role) => (
+      <div className="flex items-center gap-1 sm:gap-2">
+        {isStaff && (
+          <div className="relative" ref={panelRef}>
             <button
-              key={role}
-              onClick={() => setUserRole(role)}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all capitalize ${
-                userRole === role
-                  ? 'bg-white dark:bg-slate-700 text-brand-blue shadow-xs font-bold'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
+              onClick={() => setOpen(!open)}
+              className="relative p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition"
+              aria-label={`Alerts (${unreadAlertCount} unread)`}
             >
-              {role === 'peer-mentor' ? 'Peer' : role}
+              <Bell className="w-5 h-5" />
+              {unreadAlertCount > 0 && (
+                <span className="absolute top-0.5 right-0.5 min-w-4 h-4 px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {unreadAlertCount > 99 ? '99+' : unreadAlertCount}
+                </span>
+              )}
             </button>
-          ))}
-        </div>
 
-        {/* Notification Bell */}
-        <div className="relative">
-          <button
-            onClick={() => setNotificationsOpen(!notificationsOpen)}
-            className="relative p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition"
-            title="Alert Notifications"
-          >
-            <Bell className="w-5 h-5" />
-            {unreadAlertCount > 0 && (
-              <span className="absolute top-1 right-1 w-4 h-4 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
-                {unreadAlertCount}
-              </span>
-            )}
-          </button>
-
-          {/* Notifications Dropdown */}
-          {notificationsOpen && (
-            <div className="absolute right-0 mt-2 w-80 md:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl z-50 p-4 space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
-                <div className="flex items-center gap-2">
-                  <h4 className="font-bold text-sm text-slate-900 dark:text-white">Alert Notifications</h4>
+            {open && (
+              <div className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-16 sm:top-auto sm:mt-2 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl z-50 p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                  <h4 className="font-bold text-sm text-slate-900 dark:text-white">Open alerts</h4>
                   {unreadAlertCount > 0 && (
-                    <span className="px-2 py-0.5 text-[10px] font-bold bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-400 rounded-full">
-                      {unreadAlertCount} New
-                    </span>
+                    <button
+                      onClick={() => markAllAlertsRead().catch(err => notify(errorMessage(err), 'error'))}
+                      className="text-xs text-brand-blue hover:underline flex items-center gap-1 font-medium"
+                    >
+                      <CheckCheck className="w-3.5 h-3.5" /> Mark all read
+                    </button>
                   )}
                 </div>
-                {unreadAlertCount > 0 && (
-                  <button
-                    onClick={markAllAlertsRead}
-                    className="text-xs text-brand-blue hover:underline flex items-center gap-1 font-medium"
-                  >
-                    <CheckCheck className="w-3.5 h-3.5" /> Mark all read
-                  </button>
-                )}
-              </div>
-
-              <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
-                {alerts.length === 0 ? (
-                  <p className="text-xs text-slate-400 text-center py-6">No recent alerts</p>
-                ) : (
-                  alerts.map((alert) => (
-                    <div
-                      key={alert.id}
-                      onClick={() => {
-                        markAlertRead(alert.id);
-                        const match = students.find((s) => s.id === alert.studentId);
-                        if (match) setSelectedStudent(match);
-                        setNotificationsOpen(false);
-                      }}
-                      className={`p-3 rounded-xl border text-xs cursor-pointer transition flex items-start gap-2.5 ${
-                        alert.severity === 'critical'
-                          ? 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900 text-rose-900 dark:text-rose-200'
-                          : alert.severity === 'high'
-                          ? 'bg-orange-50/70 dark:bg-orange-950/30 border-orange-200 dark:border-orange-900 text-orange-900 dark:text-orange-200'
-                          : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-300'
-                      } ${!alert.read ? 'ring-2 ring-brand-blue/30' : 'opacity-80'}`}
-                    >
-                      {alert.severity === 'critical' ? (
-                        <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                      ) : (
-                        <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
-                      )}
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center justify-between font-semibold">
-                          <span>{alert.studentId}</span>
-                          <span className="text-[10px] text-slate-400">{alert.timestamp}</span>
+                <div className="max-h-96 overflow-y-auto space-y-2 pr-1">
+                  {alerts.length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-6">No open alerts</p>
+                  ) : (
+                    alerts.slice(0, 30).map(alert => (
+                      <button
+                        key={alert.id}
+                        onClick={() => openAlert(alert.id, alert.student_id)}
+                        className={`w-full text-left p-3 rounded-xl border text-xs transition flex items-start gap-2.5 ${
+                          alert.severity === 'critical'
+                            ? 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900 text-rose-900 dark:text-rose-200'
+                            : 'bg-orange-50/70 dark:bg-orange-950/30 border-orange-200 dark:border-orange-900 text-orange-900 dark:text-orange-200'
+                        } ${!alert.is_read ? 'ring-2 ring-brand-blue/30' : 'opacity-80'}`}
+                      >
+                        {alert.severity === 'critical' ? (
+                          <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
+                        )}
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center justify-between font-semibold">
+                            <span>{alert.student_anon_id ?? 'School-wide'}</span>
+                            <span className="text-[10px] text-slate-400">{timeAgo(alert.created_at)}</span>
+                          </div>
+                          <p className="leading-snug">{alert.message}</p>
                         </div>
-                        <p className="leading-snug">{alert.message}</p>
-                      </div>
-                    </div>
-                  ))
-                )}
+                      </button>
+                    ))
+                  )}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
-        {/* Dark Mode Toggle */}
         <button
           onClick={toggleDarkMode}
           className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition"
-          title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {darkMode ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5" />}
         </button>

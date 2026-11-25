@@ -1,112 +1,150 @@
-from datetime import datetime
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, ForeignKey
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
+
 from backend.database import Base
 
+ROLES = ('student', 'peer-mentor', 'counselor', 'admin')
+STAFF_ROLES = ('counselor', 'admin')
 
-class Student(Base):
-    __tablename__ = 'students'
 
-    id = Column(String, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+def utcnow() -> datetime:
+    # Stored as naive UTC so SQLite and Postgres behave the same.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def new_id() -> str:
+    return str(uuid4())
+
+
+class User(Base):
+    __tablename__ = 'users'
+
+    id = Column(String, primary_key=True, default=new_id)
     email = Column(String, unique=True, index=True, nullable=False)
-    department = Column(String, nullable=True)
-    semester = Column(String, nullable=True)
-    role = Column(String, default='student')
-    consent_given = Column(Boolean, default=False)
-    consent_version = Column(String, nullable=True)
-    consent_timestamp = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    name = Column(String, nullable=False)
+    role = Column(String, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    # Pseudonymous identifier shown to counselors instead of the real name (students only).
+    anon_id = Column(String, unique=True, index=True, nullable=True)
+    grade_class = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    must_change_password = Column(Boolean, default=True, nullable=False)
+    consent_given = Column(Boolean, default=False, nullable=False)
+    consent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    last_login_at = Column(DateTime, nullable=True)
+    # Incremented to invalidate all existing tokens (password change, deactivation).
+    token_version = Column(Integer, default=0, nullable=False)
 
 
-class VoiceRecording(Base):
-    __tablename__ = 'voice_recordings'
+class CheckIn(Base):
+    __tablename__ = 'checkins'
 
-    id = Column(String, primary_key=True, index=True)
-    student_id = Column(String, ForeignKey('students.id'), nullable=False)
-    filename = Column(String, nullable=False)
-    file_path = Column(String, nullable=False)
-    duration_seconds = Column(Float, nullable=True)
-    status = Column(String, default='uploaded')
-    transcription_status = Column(String, default='pending')
-    prompt_text = Column(Text, nullable=True)
-    transcript_text = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    retention_expiry = Column(DateTime, nullable=True)
+    id = Column(String, primary_key=True, default=new_id)
+    student_id = Column(String, ForeignKey('users.id', ondelete='CASCADE'), index=True, nullable=False)
+    created_at = Column(DateTime, default=utcnow, index=True, nullable=False)
 
-    student = relationship('Student')
+    mood = Column(Integer, nullable=False)  # 1 (very low) .. 5 (very good)
+    stress = Column(Integer, nullable=False)  # 1 (none) .. 5 (extreme)
+    sleep = Column(Integer, nullable=False)  # 1 (very poor) .. 5 (very good)
+    note_text = Column(Text, nullable=True)
 
+    score = Column(Integer, nullable=False)  # 0 (needs urgent support) .. 100 (doing well)
+    zone = Column(String, nullable=False)
+    self_report_score = Column(Integer, nullable=False)
+    language_flags = Column(Text, nullable=True)  # JSON list of detected cue categories
+    crisis_language = Column(Boolean, default=False, nullable=False)
 
-class VoiceFeatures(Base):
-    __tablename__ = 'voice_features'
-
-    id = Column(String, primary_key=True, index=True)
-    recording_id = Column(String, ForeignKey('voice_recordings.id'), nullable=False)
-    student_id = Column(String, ForeignKey('students.id'), nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow)
-
-    pitch_mean = Column(Float, nullable=True)
-    pitch_std = Column(Float, nullable=True)
-    speech_rate = Column(Float, nullable=True)
-    pause_duration = Column(Float, nullable=True)
-    pause_frequency = Column(Float, nullable=True)
-    energy = Column(Float, nullable=True)
-    jitter = Column(Float, nullable=True)
-    shimmer = Column(Float, nullable=True)
-    hnr = Column(Float, nullable=True)
-    sentiment_score = Column(Float, nullable=True)
-    response_length = Column(Integer, nullable=True)
-    engagement_score = Column(Float, nullable=True)
-    semantic_score = Column(Float, nullable=True)
+    # Voice features (raw audio is never stored)
+    voice_duration_s = Column(Float, nullable=True)
+    voice_pitch_hz = Column(Float, nullable=True)
+    voice_energy_db = Column(Float, nullable=True)
+    voice_pause_ratio = Column(Float, nullable=True)
+    voice_deviation = Column(Float, nullable=True)
 
 
-class VoiceBaseline(Base):
-    __tablename__ = 'voice_baselines'
+class StudentCase(Base):
+    """Counselor-side state for a student."""
+    __tablename__ = 'student_cases'
 
-    id = Column(String, primary_key=True, index=True)
-    student_id = Column(String, ForeignKey('students.id'), nullable=False)
-    baseline_period = Column(String, default='30d')
-    pitch_mean = Column(Float, nullable=True)
-    pitch_std = Column(Float, nullable=True)
-    speech_rate_mean = Column(Float, nullable=True)
-    pause_duration_mean = Column(Float, nullable=True)
-    energy_mean = Column(Float, nullable=True)
-    feature_variances = Column(Text, nullable=True)
-    recordings_used = Column(Integer, default=0)
-    baseline_status = Column(String, default='building')
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    student_id = Column(String, ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
+    escalated = Column(Boolean, default=False, nullable=False)
+    escalation_reason = Column(Text, nullable=True)
+    last_contacted_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=utcnow, nullable=False)
 
 
-class VoiceAnalysis(Base):
-    __tablename__ = 'voice_analyses'
+class CaseNote(Base):
+    __tablename__ = 'case_notes'
 
-    id = Column(String, primary_key=True, index=True)
-    student_id = Column(String, ForeignKey('students.id'), nullable=False)
-    recording_id = Column(String, ForeignKey('voice_recordings.id'), nullable=False)
-    support_index = Column(Integer, nullable=False)
-    overall_score = Column(Integer, nullable=True)
-    semantic_score = Column(Float, nullable=True)
-    risk_category = Column(String, nullable=True)
-    confidence = Column(Float, nullable=False)
-    confidence_label = Column(String, nullable=False)
-    trend = Column(String, nullable=False)
-    baseline_status = Column(String, nullable=False)
-    recommendation = Column(String, nullable=True)
-    explanation = Column(Text, nullable=True)
-    feature_changes = Column(Text, nullable=True)
-    linguistic_indicators = Column(Text, nullable=True)
-    transcript_text = Column(Text, nullable=True)
-    counselor_review_status = Column(String, default='pending')
-    counselor_notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id = Column(String, primary_key=True, default=new_id)
+    student_id = Column(String, ForeignKey('users.id', ondelete='CASCADE'), index=True, nullable=False)
+    author_id = Column(String, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    action_type = Column(String, nullable=False)  # note | contact | escalate | resolve
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=utcnow, index=True, nullable=False)
+
+    author = relationship('User', foreign_keys=[author_id])
+
+
+class Alert(Base):
+    __tablename__ = 'alerts'
+
+    id = Column(String, primary_key=True, default=new_id)
+    student_id = Column(String, ForeignKey('users.id', ondelete='CASCADE'), index=True, nullable=True)
+    conversation_id = Column(String, ForeignKey('conversations.id', ondelete='SET NULL'), nullable=True)
+    type = Column(String, nullable=False)  # zone_shift | crisis_language | crisis_button | chat_flag | escalation
+    severity = Column(String, nullable=False)  # critical | high | medium
+    message = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by = Column(String, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(DateTime, default=utcnow, index=True, nullable=False)
+
+
+class Conversation(Base):
+    __tablename__ = 'conversations'
+
+    id = Column(String, primary_key=True, default=new_id)
+    student_id = Column(String, ForeignKey('users.id', ondelete='CASCADE'), index=True, nullable=False)
+    alias = Column(String, nullable=False)  # what mentors see instead of the student
+    topic = Column(String, nullable=True)
+    status = Column(String, default='open', nullable=False)  # open | escalated | closed
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, index=True, nullable=False)
+
+
+class Message(Base):
+    __tablename__ = 'messages'
+
+    id = Column(String, primary_key=True, default=new_id)
+    conversation_id = Column(String, ForeignKey('conversations.id', ondelete='CASCADE'), index=True, nullable=False)
+    sender_id = Column(String, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    sender_role = Column(String, nullable=False)  # student | peer-mentor | counselor | system
+    body = Column(Text, nullable=False)
+    flagged = Column(Boolean, default=False, nullable=False)
+    flag_reason = Column(String, nullable=True)
+    created_at = Column(DateTime, default=utcnow, index=True, nullable=False)
+
+
+class Setting(Base):
+    __tablename__ = 'settings'
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=False)
 
 
 class AuditLog(Base):
     __tablename__ = 'audit_logs'
 
-    id = Column(String, primary_key=True, index=True)
-    student_id = Column(String, nullable=True)
-    actor_role = Column(String, nullable=True)
+    id = Column(String, primary_key=True, default=new_id)
+    actor_id = Column(String, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     action = Column(String, nullable=False)
+    target_id = Column(String, nullable=True)
     details = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow, index=True, nullable=False)
+
+    actor = relationship('User', foreign_keys=[actor_id])

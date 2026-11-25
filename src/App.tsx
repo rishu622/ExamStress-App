@@ -1,54 +1,56 @@
 import React, { useState } from 'react';
-import { AppProvider, useApp } from './context/AppContext';
+import { AppProvider, PAGE_ROLES, useApp } from './context/AppContext';
 import { Sidebar } from './components/layout/Sidebar';
 import { Topbar } from './components/layout/Topbar';
 import { Footer } from './components/layout/Footer';
-
-// Pages
-import { LoginPage } from './pages/LoginPage';
+import { Spinner, Toasts } from './components/common/ui';
+import { LoginPage, ChangePasswordPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
-import { SimulatorPage } from './pages/SimulatorPage';
 import { PeerChatPage } from './pages/PeerChatPage';
 import { AdminPage } from './pages/AdminPage';
 import { StudentPortalPage } from './pages/StudentPortalPage';
-import { SettingsPage } from './pages/SettingsPage';
+import { AccountPage } from './pages/AccountPage';
 
 const MainLayout: React.FC = () => {
-  const { isAuthenticated, activePage } = useApp();
+  const { user, authLoading, activePage } = useApp();
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  if (!isAuthenticated) {
-    return <LoginPage />;
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F7F9FC] dark:bg-slate-950">
+        <Spinner label="Loading…" />
+      </div>
+    );
   }
+  if (!user) return <LoginPage />;
+  if (user.must_change_password) return <ChangePasswordPage forced />;
 
-  const renderPage = () => {
+  const page = (() => {
+    // Until the redirect effect runs, never mount a page this role may not use.
+    if (!PAGE_ROLES[activePage].includes(user.role)) return null;
     switch (activePage) {
       case 'dashboard':
         return <DashboardPage />;
-      case 'simulator':
-        return <SimulatorPage />;
       case 'peer-chat':
         return <PeerChatPage />;
       case 'admin':
         return <AdminPage />;
       case 'student-portal':
         return <StudentPortalPage />;
-      case 'settings':
-        return <SettingsPage />;
+      case 'account':
+        return <AccountPage />;
       default:
-        return <DashboardPage />;
+        return null;
     }
-  };
+  })();
 
   return (
-    <div className="min-h-screen bg-[#F7F9FC] dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
-      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
-
-      <div className={`flex-1 flex flex-col transition-all duration-300 ${collapsed ? 'ml-20' : 'ml-64'}`}>
-        <Topbar />
-        <main className="flex-1 p-6">
-          {renderPage()}
-        </main>
+    <div className="min-h-screen bg-[#F7F9FC] dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans">
+      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${collapsed ? 'lg:ml-20' : 'lg:ml-64'}`}>
+        <Topbar onMenu={() => setMobileOpen(true)} />
+        <main className="flex-1 p-4 sm:p-6">{page}</main>
         <Footer />
       </div>
     </div>
@@ -59,6 +61,7 @@ export default function App() {
   return (
     <AppProvider>
       <MainLayout />
+      <Toasts />
     </AppProvider>
   );
 }

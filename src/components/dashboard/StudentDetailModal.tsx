@@ -1,347 +1,256 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Eye, PhoneCall, ShieldAlert, StickyNote, CheckCircle2, Loader2, Lock, Mic, MessageSquareQuote } from 'lucide-react';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
 import { useApp } from '../../context/AppContext';
+import { api, errorMessage } from '../../lib/api';
+import { MOOD_LABELS, SLEEP_LABELS, STRESS_LABELS, formatDateTime, shortDate, timeAgo } from '../../lib/format';
+import type { StudentDetail } from '../../types';
+import { ErrorBox, Modal, Spinner, dangerButton, inputClass, primaryButton, secondaryButton } from '../common/ui';
 import { RiskBadge } from '../common/RiskBadge';
 import { RiskScoreRing } from '../common/RiskScoreRing';
-import { RevealIdentityModal } from '../common/RevealIdentityModal';
-import {
-  X,
-  Lock,
-  Unlock,
-  Sparkles,
-  TrendingDown,
-  TrendingUp,
-  UserCheck,
-  ShieldAlert,
-  Send,
-  History,
-  Activity,
-  Zap,
-  Clock,
-  Volume2,
-  FileText
-} from 'lucide-react';
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  Radar,
-  Legend
-} from 'recharts';
-import { motion, AnimatePresence } from 'framer-motion';
 
-export const StudentDetailModal: React.FC = () => {
-  const {
-    selectedStudent,
-    setSelectedStudent,
-    revealStudentIdentity,
-    markStudentContacted,
-    escalateStudentToRed
-  } = useApp();
+type Action = null | 'reveal' | 'contact' | 'note' | 'escalate' | 'resolve';
 
-  const [revealModalOpen, setRevealModalOpen] = useState(false);
-  const [noteText, setNoteText] = useState('');
-  const [activeTab, setActiveTab] = useState<'biomarkers' | 'radar' | 'timeline'>('biomarkers');
+const FLAG_LABELS: Record<string, string> = {
+  hopelessness: 'Hopelessness',
+  anxiety: 'Anxiety',
+  overwhelm: 'Overwhelm',
+  low_mood: 'Low mood',
+  sleep: 'Sleep problems',
+  safety: 'Safety concern',
+};
 
-  if (!selectedStudent) return null;
+const ACTION_COPY: Record<Exclude<Action, null>, { title: string; label: string; placeholder: string; button: string; danger?: boolean }> = {
+  reveal: {
+    title: 'Reveal student identity',
+    label: 'Why do you need to know who this student is? This is permanently recorded in the audit log.',
+    placeholder: 'e.g. Red-zone check-in with distress language; need to arrange a meeting today',
+    button: 'Reveal identity',
+  },
+  contact: { title: 'Log contact with student', label: 'What happened? (optional)', placeholder: 'e.g. Met in counselor office, agreed study plan, follow up Friday', button: 'Save contact' },
+  note: { title: 'Add private case note', label: 'Note (visible to counselors and administrators only)', placeholder: 'Observation, plan, or follow-up…', button: 'Save note' },
+  escalate: {
+    title: 'Escalate to priority',
+    label: 'Reason for escalation. The student is shown as Red until you resolve it, and all counselors are alerted.',
+    placeholder: 'e.g. Teacher reports student crying in class and missing meals',
+    button: 'Escalate',
+    danger: true,
+  },
+  resolve: { title: 'Resolve escalation', label: 'Outcome (optional)', placeholder: 'e.g. Parents informed; referred to external therapist', button: 'Resolve escalation' },
+};
 
-  const handleAddNote = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!noteText.trim()) return;
-    markStudentContacted(selectedStudent.id, noteText);
-    setNoteText('');
+export const StudentDetailModal: React.FC<{ studentId: string; onClose: () => void; onChanged: () => void }> = ({ studentId, onClose, onChanged }) => {
+  const { notify, refreshAlerts } = useApp();
+  const [student, setStudent] = useState<StudentDetail | null>(null);
+  const [error, setError] = useState('');
+  const [identity, setIdentity] = useState<{ name: string; email: string; grade_class: string | null } | null>(null);
+  const [action, setAction] = useState<Action>(null);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState('');
+
+  const load = useCallback(() => {
+    api.get<StudentDetail>(`/api/students/${studentId}`).then(setStudent).catch(err => setError(errorMessage(err)));
+  }, [studentId]);
+  useEffect(load, [load]);
+
+  const openAction = (a: Action) => {
+    setAction(a);
+    setText('');
+    setActionError('');
   };
 
-  return (
-    <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.96, y: 15 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.96, y: 15 }}
-          className="relative w-full max-w-5xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 my-auto overflow-hidden flex flex-col max-h-[90vh]"
-        >
-          {/* Header Bar */}
-          <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-start justify-between bg-slate-50/50 dark:bg-slate-800/30">
-            <div className="flex items-center gap-4">
-              <RiskScoreRing score={selectedStudent.riskScore} size={84} strokeWidth={8} zone={selectedStudent.zone} />
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white font-mono tracking-tight">
-                    Student {selectedStudent.id}
-                  </h2>
-                  <RiskBadge zone={selectedStudent.zone} />
-                  {selectedStudent.isContacted && (
-                    <span className="px-2.5 py-0.5 text-xs font-semibold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 rounded-full flex items-center gap-1">
-                      <UserCheck className="w-3.5 h-3.5" /> Contacted
-                    </span>
-                  )}
-                </div>
+  const submitAction = async () => {
+    if (!action) return;
+    setBusy(true);
+    setActionError('');
+    try {
+      if (action === 'reveal') {
+        setIdentity(await api.post(`/api/students/${studentId}/reveal`, { reason: text }));
+      } else if (action === 'contact' || action === 'note') {
+        await api.post(`/api/students/${studentId}/notes`, { text, action_type: action });
+      } else if (action === 'escalate') {
+        await api.post(`/api/students/${studentId}/escalate`, { reason: text });
+        refreshAlerts();
+      } else if (action === 'resolve') {
+        await api.post(`/api/students/${studentId}/resolve-escalation`, { note: text });
+      }
+      notify(action === 'reveal' ? 'Identity revealed and logged.' : 'Saved.');
+      setAction(null);
+      load();
+      onChanged();
+    } catch (err) {
+      setActionError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
-                {/* Identity reveal line */}
-                <div className="flex items-center gap-3 mt-1.5 text-sm">
-                  {selectedStudent.isIdentified ? (
-                    <div className="flex items-center gap-2 text-brand-blue font-bold">
-                      <Unlock className="w-4 h-4 text-emerald-500" />
-                      <span>{selectedStudent.realName}</span>
-                      <span className="text-slate-400 font-normal">({selectedStudent.gradeClass})</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-500 font-mono">Real Identity Encrypted</span>
-                      <button
-                        onClick={() => setRevealModalOpen(true)}
-                        className="px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition flex items-center gap-1.5"
-                      >
-                        <Lock className="w-3 h-3 text-amber-500" />
-                        <span>Reveal Identity</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
+  const latest = student?.history[student.history.length - 1];
+  const recentNotes = student?.history.filter(c => c.note_text).slice(-5).reverse() ?? [];
+  const voiceRows = student?.history.filter(c => c.voice_energy_db !== null) ?? [];
+  const copy = action ? ACTION_COPY[action] : null;
+
+  return (
+    <Modal open onClose={onClose} title={student ? `Student ${student.anon_id}` : 'Student'} wide>
+      {error && <ErrorBox message={error} onRetry={load} />}
+      {!student && !error && <Spinner label="Loading student…" />}
+      {student && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row gap-5 sm:items-center">
+            {student.score !== null ? (
+              <RiskScoreRing score={student.score} zone={student.zone ?? undefined} size={120} strokeWidth={11} />
+            ) : (
+              <div className="w-[120px] h-[120px] rounded-full border-8 border-slate-100 dark:border-slate-800 flex items-center justify-center text-xs text-slate-400 text-center p-3">No check-ins yet</div>
+            )}
+            <div className="flex-1 space-y-2 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                {student.zone && <RiskBadge zone={student.zone} />}
+                {student.escalated && <span className="px-2 py-0.5 text-[11px] font-bold rounded-full bg-rose-600 text-white">Escalated</span>}
+                {student.crisis_flag && <span className="px-2 py-0.5 text-[11px] font-bold rounded-full bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300">Crisis language in latest check-in</span>}
+                {!student.consent_given && <span className="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">Not opted in to check-ins</span>}
+              </div>
+              <p className="text-slate-600 dark:text-slate-300">
+                {student.grade_class ?? 'No class'} · last check-in {timeAgo(student.last_checkin_at)}
+                {student.zone && ` · ${student.days_in_zone} day(s) in current zone`}
+              </p>
+              {student.escalation_reason && <p className="text-rose-700 dark:text-rose-300"><strong>Escalation:</strong> {student.escalation_reason}</p>}
+              {student.last_contacted_at && <p className="text-emerald-700 dark:text-emerald-400 text-xs">Last contacted {formatDateTime(student.last_contacted_at)}</p>}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+                {identity ? (
+                  <p className="text-slate-800 dark:text-slate-100"><strong>{identity.name}</strong> · {identity.email}{identity.grade_class && ` · ${identity.grade_class}`}</p>
+                ) : (
+                  <p className="text-xs text-slate-500 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Identity hidden. Revealing it is logged with your reason.</p>
+                )}
               </div>
             </div>
-
-            <button
-              onClick={() => setSelectedStudent(null)}
-              className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 bg-white dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 transition"
-            >
-              <X className="w-5 h-5" />
-            </button>
           </div>
 
-          {/* AI Insight Callout Box */}
-          <div className="mx-6 mt-4 p-4 rounded-2xl bg-gradient-to-r from-blue-50 to-emerald-50 dark:from-slate-800 dark:to-slate-800/80 border border-blue-100 dark:border-slate-700 flex items-start gap-3">
-            <div className="p-2 rounded-xl bg-brand-blue text-white shadow-xs shrink-0">
-              <Sparkles className="w-5 h-5" />
+          <div className="flex flex-wrap gap-2">
+            {!identity && <button onClick={() => openAction('reveal')} className={secondaryButton}><Eye className="w-4 h-4" /> Reveal identity</button>}
+            <button onClick={() => openAction('contact')} className={primaryButton}><PhoneCall className="w-4 h-4" /> Log contact</button>
+            <button onClick={() => openAction('note')} className={secondaryButton}><StickyNote className="w-4 h-4" /> Add note</button>
+            {student.escalated ? (
+              <button onClick={() => openAction('resolve')} className={secondaryButton}><CheckCircle2 className="w-4 h-4" /> Resolve escalation</button>
+            ) : (
+              <button onClick={() => openAction('escalate')} className={dangerButton}><ShieldAlert className="w-4 h-4" /> Escalate</button>
+            )}
+          </div>
+
+          {copy && (
+            <div className="p-4 rounded-2xl border border-brand-blue/30 bg-blue-50/40 dark:bg-slate-800/50 space-y-3">
+              <p className="font-bold text-sm text-slate-900 dark:text-white">{copy.title}</p>
+              <label className="block text-xs text-slate-600 dark:text-slate-300">
+                {copy.label}
+                <textarea value={text} onChange={e => setText(e.target.value)} rows={3} placeholder={copy.placeholder} className={`${inputClass} mt-1.5`} autoFocus />
+              </label>
+              {actionError && <ErrorBox message={actionError} />}
+              <div className="flex gap-2">
+                <button onClick={submitAction} disabled={busy} className={copy.danger ? dangerButton : primaryButton}>
+                  {busy && <Loader2 className="w-4 h-4 animate-spin" />} {copy.button}
+                </button>
+                <button onClick={() => setAction(null)} className={secondaryButton}>Cancel</button>
+              </div>
             </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-brand-blue dark:text-brand-mint">
-                AI Diagnostic Early Warning Insight
-              </h4>
-              <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 mt-1 leading-relaxed">
-                "{selectedStudent.aiIntervention}"
+          )}
+
+          {student.history.length > 1 && (
+            <div className="space-y-2">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white">Check-in history</h3>
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={student.history.map(c => ({ date: shortDate(c.created_at), Wellbeing: c.score, Mood: c.mood * 20, Stress: c.stress * 20, Sleep: c.sleep * 20 }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#94a3b833" />
+                    <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} />
+                    <YAxis stroke="#94a3b8" fontSize={11} domain={[0, 100]} />
+                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderRadius: 12, border: 'none', color: '#fff', fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Line type="monotone" dataKey="Wellbeing" stroke="#4A90E2" strokeWidth={3} dot={{ r: 2 }} />
+                    <Line type="monotone" dataKey="Mood" stroke="#10b981" strokeWidth={1.5} dot={false} />
+                    <Line type="monotone" dataKey="Stress" stroke="#f43f5e" strokeWidth={1.5} dot={false} />
+                    <Line type="monotone" dataKey="Sleep" stroke="#8b5cf6" strokeWidth={1.5} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="text-[11px] text-slate-400">Mood, stress and sleep are the student's own 1–5 answers, scaled ×20 to share the axis.</p>
+            </div>
+          )}
+
+          {latest && (
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50"><p className="text-slate-400 font-bold uppercase text-[10px]">Mood</p><p className="font-bold text-slate-800 dark:text-slate-100">{MOOD_LABELS[latest.mood]}</p></div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50"><p className="text-slate-400 font-bold uppercase text-[10px]">Stress</p><p className="font-bold text-slate-800 dark:text-slate-100">{STRESS_LABELS[latest.stress]}</p></div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50"><p className="text-slate-400 font-bold uppercase text-[10px]">Sleep</p><p className="font-bold text-slate-800 dark:text-slate-100">{SLEEP_LABELS[latest.sleep]}</p></div>
+            </div>
+          )}
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5"><MessageSquareQuote className="w-4 h-4 text-brand-blue" /> What the student wrote</h3>
+              {recentNotes.length === 0 ? (
+                <p className="text-xs text-slate-500">No written notes in recent check-ins.</p>
+              ) : (
+                recentNotes.map(c => (
+                  <div key={c.id} className={`p-3 rounded-xl text-xs border ${c.crisis_language ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800'}`}>
+                    <p className="text-slate-800 dark:text-slate-100 whitespace-pre-wrap">"{c.note_text}"</p>
+                    <div className="flex flex-wrap gap-1 mt-2 items-center">
+                      <span className="text-[10px] text-slate-400 mr-1">{formatDateTime(c.created_at)}</span>
+                      {c.crisis_language && <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[10px] font-bold">Crisis language</span>}
+                      {c.language_flags.map(f => <span key={f} className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[10px] font-semibold">{FLAG_LABELS[f] ?? f}</span>)}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5"><StickyNote className="w-4 h-4 text-brand-blue" /> Counselor log</h3>
+              {student.notes.length === 0 ? (
+                <p className="text-xs text-slate-500">No contacts or notes yet.</p>
+              ) : (
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {student.notes.map(n => (
+                    <div key={n.id} className="p-3 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+                      <div className="flex justify-between gap-2 text-[10px] text-slate-400">
+                        <span className="font-bold uppercase">{n.action_type} · {n.author_name}</span>
+                        <span>{formatDateTime(n.created_at)}</span>
+                      </div>
+                      <p className="mt-1 text-slate-800 dark:text-slate-100 whitespace-pre-wrap">{n.text}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {voiceRows.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5"><Mic className="w-4 h-4 text-brand-blue" /> Voice check-ins</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="text-[10px] uppercase text-slate-400">
+                    <tr><th className="text-left py-1.5">Date</th><th className="text-left">Loudness</th><th className="text-left">Pauses</th><th className="text-left">Pitch</th><th className="text-left">Change vs. usual</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+                    {voiceRows.slice(-6).reverse().map(c => (
+                      <tr key={c.id}>
+                        <td className="py-1.5">{shortDate(c.created_at)}</td>
+                        <td>{c.voice_energy_db} dB</td>
+                        <td>{c.voice_pause_ratio !== null ? `${Math.round(c.voice_pause_ratio * 100)}%` : '—'}</td>
+                        <td>{c.voice_pitch_hz ? `${Math.round(c.voice_pitch_hz)} Hz` : '—'}</td>
+                        <td>{c.voice_deviation === null ? 'Building baseline' : c.voice_deviation >= 0.5 ? `Large (${c.voice_deviation})` : c.voice_deviation >= 0.2 ? `Some (${c.voice_deviation})` : 'Typical'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Voice features are compared only with this student's own earlier recordings. They can lower the wellbeing score by at most 10 points and are not diagnostic.
               </p>
             </div>
-          </div>
-
-          {/* Tab Navigation */}
-          <div className="px-6 border-b border-slate-100 dark:border-slate-800 flex items-center gap-4 mt-4">
-            <button
-              onClick={() => setActiveTab('biomarkers')}
-              className={`pb-3 text-xs sm:text-sm font-semibold border-b-2 transition flex items-center gap-2 ${
-                activeTab === 'biomarkers'
-                  ? 'border-brand-blue text-brand-blue font-bold'
-                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              <Activity className="w-4 h-4" /> 30-Day Biomarker Line Trends
-            </button>
-            <button
-              onClick={() => setActiveTab('radar')}
-              className={`pb-3 text-xs sm:text-sm font-semibold border-b-2 transition flex items-center gap-2 ${
-                activeTab === 'radar'
-                  ? 'border-brand-blue text-brand-blue font-bold'
-                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              <Zap className="w-4 h-4" /> Baseline vs Current Radar
-            </button>
-            <button
-              onClick={() => setActiveTab('timeline')}
-              className={`pb-3 text-xs sm:text-sm font-semibold border-b-2 transition flex items-center gap-2 ${
-                activeTab === 'timeline'
-                  ? 'border-brand-blue text-brand-blue font-bold'
-                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              <History className="w-4 h-4" /> Counselor Intervention Log ({selectedStudent.notes.length})
-            </button>
-          </div>
-
-          {/* Scrollable Main Content */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            {activeTab === 'biomarkers' && (
-              <div className="space-y-6">
-                {/* 1. Voice Energy Level (Normalized 0.0 - 1.0) */}
-                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <Zap className="w-4 h-4 text-amber-500" />
-                      <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide">
-                        Acoustic Energy Level (dB normalized)
-                      </h4>
-                    </div>
-                    <span className="text-xs font-mono text-slate-500">30-Day Trajectory</span>
-                  </div>
-                  <div className="h-36">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={selectedStudent.biomarkers30Days}>
-                        <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} tickLine={false} />
-                        <YAxis stroke="#94a3b8" fontSize={10} domain={[0, 1]} tickLine={false} />
-                        <Tooltip
-                          contentStyle={{ backgroundColor: '#1e293b', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }}
-                        />
-                        <Line type="monotone" dataKey="energyLevel" stroke="#4A90E2" strokeWidth={2.5} dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                {/* Grid for 2 sub charts */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Response Latency (ms) */}
-                  <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-rose-500" />
-                        <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide">
-                          Response Latency (Pause ms)
-                        </h4>
-                      </div>
-                    </div>
-                    <div className="h-32">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={selectedStudent.biomarkers30Days}>
-                          <XAxis dataKey="date" stroke="#94a3b8" fontSize={9} tickLine={false} />
-                          <YAxis stroke="#94a3b8" fontSize={9} tickLine={false} />
-                          <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderRadius: '8px', color: '#fff', fontSize: '11px' }} />
-                          <Line type="monotone" dataKey="responseLatency" stroke="#F44336" strokeWidth={2} dot={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* Absolutist Language Count */}
-                  <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-purple-500" />
-                        <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide">
-                          Absolutist Language Word Count
-                        </h4>
-                      </div>
-                    </div>
-                    <div className="h-32">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={selectedStudent.biomarkers30Days}>
-                          <XAxis dataKey="date" stroke="#94a3b8" fontSize={9} tickLine={false} />
-                          <YAxis stroke="#94a3b8" fontSize={9} tickLine={false} />
-                          <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderRadius: '8px', color: '#fff', fontSize: '11px' }} />
-                          <Line type="monotone" dataKey="absolutistWords" stroke="#A855F7" strokeWidth={2} dot={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'radar' && (
-              <div className="p-6 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex flex-col items-center">
-                <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-2">
-                  Baseline (Initial 14 Days) vs Current Acoustic Biomarker Radar Profile
-                </h4>
-                <div className="w-full max-w-lg h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RadarChart cx="50%" cy="50%" outerRadius="75%" data={selectedStudent.radarData}>
-                      <PolarGrid stroke="#cbd5e1" />
-                      <PolarAngleAxis dataKey="subject" stroke="#64748b" fontSize={11} />
-                      <PolarRadiusAxis angle={30} domain={[0, 100]} stroke="#94a3b8" fontSize={9} />
-                      <Radar name="Healthy Baseline" dataKey="baseline" stroke="#50E3C2" fill="#50E3C2" fillOpacity={0.3} />
-                      <Radar name="Current Status" dataKey="current" stroke="#F44336" fill="#F44336" fillOpacity={0.4} />
-                      <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-                    </RadarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'timeline' && (
-              <div className="space-y-4">
-                {/* Form to add note */}
-                <form onSubmit={handleAddNote} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-3">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
-                    Log New Counselor Intervention Note
-                  </label>
-                  <textarea
-                    rows={2}
-                    placeholder="Enter observation, phone conversation summary, or follow-up plan..."
-                    value={noteText}
-                    onChange={(e) => setNoteText(e.target.value)}
-                    className="w-full p-3 text-xs sm:text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-brand-blue/30 focus:outline-hidden dark:text-white"
-                  />
-                  <div className="flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={() => escalateStudentToRed(selectedStudent.id, noteText || 'Critical voice drop observed')}
-                      className="px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-100 dark:bg-rose-950 dark:text-rose-300 hover:bg-rose-200 rounded-xl transition flex items-center gap-1.5"
-                    >
-                      <ShieldAlert className="w-4 h-4" /> Escalate to Red Zone
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={!noteText.trim()}
-                      className="px-4 py-1.5 text-xs font-semibold text-white bg-brand-blue hover:bg-blue-600 disabled:opacity-40 rounded-xl shadow-xs transition flex items-center gap-1.5"
-                    >
-                      <Send className="w-3.5 h-3.5" /> Save Note & Mark Contacted
-                    </button>
-                  </div>
-                </form>
-
-                {/* Timeline List */}
-                <div className="space-y-3 pt-2">
-                  {selectedStudent.notes.length === 0 ? (
-                    <p className="text-xs text-slate-400 text-center py-6">No previous counselor notes logged.</p>
-                  ) : (
-                    selectedStudent.notes.map((note) => (
-                      <div
-                        key={note.id}
-                        className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs space-y-1"
-                      >
-                        <div className="flex items-center justify-between text-slate-500">
-                          <span className="font-semibold text-slate-800 dark:text-slate-200">{note.counselorName}</span>
-                          <span className="font-mono text-[10px]">{note.timestamp}</span>
-                        </div>
-                        <p className="text-slate-700 dark:text-slate-300 leading-relaxed">{note.note}</p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Footer Actions */}
-          <div className="p-4 px-6 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 flex items-center justify-between">
-            <span className="text-xs text-slate-400 font-mono">
-              Student ID: {selectedStudent.id} • Last Check: {selectedStudent.lastVoiceCheck}
-            </span>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setSelectedStudent(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl transition"
-              >
-                Close Modal
-              </button>
-            </div>
-          </div>
-        </motion.div>
-      </div>
-
-      {/* Identity Reveal Modal */}
-      <RevealIdentityModal
-        isOpen={revealModalOpen}
-        onClose={() => setRevealModalOpen(false)}
-        onConfirm={() => revealStudentIdentity(selectedStudent.id)}
-        studentId={selectedStudent.id}
-      />
-    </AnimatePresence>
+          )}
+        </div>
+      )}
+    </Modal>
   );
 };
