@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Activity,
   X,
+  Mic,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -25,11 +26,12 @@ interface SidebarProps {
 }
 
 const NAV: { id: ActivePage; label: string; icon: React.ElementType }[] = [
-  { id: 'student-portal', label: 'My Wellbeing', icon: Heart },
   { id: 'dashboard', label: 'Counselor Dashboard', icon: LayoutDashboard },
-  { id: 'peer-chat', label: 'Peer Support Chat', icon: MessageSquareHeart },
+  { id: 'simulator', label: 'Attendance Simulator', icon: Mic },
+  { id: 'student-portal', label: 'My Wellbeing', icon: Heart },
+  { id: 'peer-chat', label: 'Anonymous Peer Chat', icon: MessageSquareHeart },
   { id: 'admin', label: 'School Administration', icon: BarChart3 },
-  { id: 'account', label: 'My Account', icon: UserCog },
+  { id: 'account', label: 'Settings & Profile', icon: UserCog },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) => {
@@ -37,7 +39,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, mobil
   if (!user) return null;
 
   const items = NAV.filter(item => PAGE_ROLES[item.id].includes(user.role)).map(item =>
-    item.id === 'admin' && user.role === 'counselor' ? { ...item, label: 'School Overview' } : item,
+    item.id === 'admin' && user.role === 'counselor' ? { ...item, label: 'School Admin Overview' } : item,
   );
   const initials = user.name.split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
   const wide = !collapsed || mobileOpen;

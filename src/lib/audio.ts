@@ -28,6 +28,14 @@ export async function toWav(blob: Blob): Promise<{ wav: Blob; seconds: number }>
   const rendered = await offline.startRendering();
   const samples = rendered.getChannelData(0);
 
+  return { wav: encodeWav(samples, TARGET_RATE), seconds: decoded.duration };
+}
+
+export const recordingSupported = () =>
+  typeof window !== 'undefined' && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== 'undefined';
+
+/** 16-bit PCM mono WAV from float samples in [-1, 1]. */
+export function encodeWav(samples: Float32Array, rate: number): Blob {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
   const view = new DataView(buffer);
   const writeString = (offset: number, value: string) => {
@@ -40,8 +48,8 @@ export async function toWav(blob: Blob): Promise<{ wav: Blob; seconds: number }>
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true); // PCM
   view.setUint16(22, 1, true); // mono
-  view.setUint32(24, TARGET_RATE, true);
-  view.setUint32(28, TARGET_RATE * 2, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   writeString(36, 'data');
@@ -50,8 +58,5 @@ export async function toWav(blob: Blob): Promise<{ wav: Blob; seconds: number }>
     const s = Math.max(-1, Math.min(1, samples[i]));
     view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
   }
-  return { wav: new Blob([buffer], { type: 'audio/wav' }), seconds: decoded.duration };
+  return new Blob([buffer], { type: 'audio/wav' });
 }
-
-export const recordingSupported = () =>
-  typeof window !== 'undefined' && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== 'undefined';

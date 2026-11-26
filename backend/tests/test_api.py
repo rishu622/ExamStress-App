@@ -346,3 +346,80 @@ def test_guest_checkin(client, world):
     client.put('/api/settings', headers=auth(world['admin']), json={'guest_access_enabled': False})
     assert client.post('/api/guest/checkin', json={'mood': 3, 'stress': 3, 'sleep': 3}).status_code == 403
     client.put('/api/settings', headers=auth(world['admin']), json={'guest_access_enabled': True})
+
+
+def test_attendance_voice_simulator(client, world):
+    c, s = auth(world['counselor']), auth(world['student'])
+    files = {'audio': ('call.wav', make_wav(seconds=2.5), 'audio/wav')}
+    assert client.post('/api/voice/analyze', headers=s, files=files).status_code == 403
+    r = client.post('/api/voice/analyze', headers=c, files={'audio': ('call.wav', make_wav(seconds=2.5), 'audio/wav')},
+                    data={'transcript': 'present nothing ever works, always tired', 'label': 'Test'})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert 0 <= body['score'] <= 100 and body['zone'] in ('green', 'yellow', 'orange', 'red')
+    assert body['features']['onset_latency_ms'] >= 0
+    assert set(body['absolutist_words']) == {'nothing', 'ever', 'always'}
+    bad = client.post('/api/voice/analyze', headers=c, files={'audio': ('x.wav', b'nope', 'audio/wav')})
+    assert bad.status_code == 400
+
+
+def test_attendance_scoring_orders_profiles():
+    from backend.services.attendance import score_response
+    healthy = {'pitch_hz': 210, 'pitch_variability_st': 2.5, 'speech_rate_wpm': 145, 'onset_latency_ms': 180, 'energy_db': -22, 'pause_ratio': 0.2, 'syllables': 8}
+    flat = {'pitch_hz': 125, 'pitch_variability_st': 0.3, 'speech_rate_wpm': 85, 'onset_latency_ms': 850, 'energy_db': -38, 'pause_ratio': 0.4, 'syllables': 8}
+    assert score_response(healthy)['score'] == 100
+    assert score_response(flat, 'nothing ever changes always')['score'] < 30
+
+
+def test_chat_voice_note(client, world):
+    s, m, o = auth(world['student']), auth(world['peer-mentor']), auth(world['other'])
+    conv = client.post('/api/chat/conversations', headers=s, json={'message': 'Can I send a voice note?'}).json()
+    r = client.post(f"/api/chat/conversations/{conv['id']}/voice", headers=s, files={'audio': ('n.wav', make_wav(seconds=2), 'audio/wav')})
+    assert r.status_code == 201, r.text
+    msgs = client.get(f"/api/chat/conversations/{conv['id']}/messages", headers=m).json()['messages']
+    note = next(x for x in msgs if x['voice_seconds'])
+    assert note['body'].startswith('[Voice note 0:02')
+    audio = client.get(f"/api/chat/messages/{note['id']}/voice", headers=m)
+    assert audio.status_code == 200 and audio.content[:4] == b'RIFF'
+    assert client.get(f"/api/chat/messages/{note['id']}/voice", headers=o).status_code == 404
+    bad = client.post(f"/api/chat/conversations/{conv['id']}/voice", headers=s, files={'audio': ('n.wav', b'xx', 'audio/wav')})
+    assert bad.status_code == 400
+
+
+def test_staff_profile_update(client, world):
+    c, s = auth(world['counselor']), auth(world['student'])
+    assert client.patch('/api/auth/me/profile', headers=s, json={'name': 'X Y'}).status_code == 403
+    r = client.patch('/api/auth/me/profile', headers=c, json={'name': 'Dr. Coun Selor', 'alert_phone': '+91 98765 43210'})
+    assert r.status_code == 200 and r.json()['alert_phone'] == '+91 98765 43210'
+    assert client.patch('/api/auth/me/profile', headers=c, json={'alert_phone': 'call me'}).status_code == 400
+    assert client.patch('/api/auth/me/profile', headers=c, json={'email': 'new@school.test'}).status_code == 400
+    assert client.patch('/api/auth/me/profile', headers=c, json={'email': 'mentor@school.test', 'current_password': 'NewPass1234'}).status_code == 400
+    r = client.patch('/api/auth/me/profile', headers=c, json={'email': 'counselor2@school.test', 'current_password': 'NewPass1234'})
+    assert r.status_code == 200 and r.json()['email'] == 'counselor2@school.test'
+
+
+def test_vocal_strain_model_separates_calm_and_crying():
+    from backend.services.voice import extract_features
+    from backend.services.voice_quality import strain
+    rate = 16000
+    rng = np.random.default_rng(1)
+
+    def voice(f0, jitter=0.0, breath=0.0):
+        out = []
+        for _ in range(8):
+            n = int(0.18 * rate)
+            semis = np.repeat(rng.normal(0, jitter, n // 80 + 1), 80)[:n] if jitter else np.zeros(n)
+            ph = 2 * np.pi * np.cumsum(f0 * 2 ** (semis / 12)) / rate
+            src = sum(np.sin(h * ph) / h for h in range(1, 16)) * (1 - breath) + rng.normal(0, 1, n) * breath * 0.6
+            out += [src * np.sin(np.pi * np.arange(n) / n) * 0.08, np.zeros(int(0.12 * rate))]
+        sig = np.concatenate([np.zeros(3000)] + out) + rng.normal(0, 0.0008, sum(len(o) for o in out) + 3000)
+        buf = io.BytesIO()
+        with wave.open(buf, 'wb') as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+            w.writeframes((np.clip(sig, -1, 1) * 32767).astype('<i2').tobytes())
+        return extract_features(buf.getvalue(), 30, 1.0)
+
+    calm = voice(210)
+    crying = voice(450, jitter=0.7, breath=0.55)
+    assert strain(calm['quality'], calm['pitch_hz'])['index'] < 0.15
+    assert strain(crying['quality'], crying['pitch_hz'])['index'] > 0.35

@@ -33,4 +33,5 @@ def user_public(user: User) -> dict:
         'consent_given': user.consent_given,
         'created_at': iso(user.created_at),
         'last_login_at': iso(user.last_login_at),
+        'alert_phone': user.alert_phone if user.role != 'student' else None,
     }

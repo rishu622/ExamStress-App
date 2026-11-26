@@ -1,3 +1,4 @@
+import re
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -5,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.auth import (
-    create_access_token, get_current_user, hash_password, login_limiter, signup_limiter, validate_new_password,
+    create_access_token, get_current_user, require_ready_user, hash_password, login_limiter, signup_limiter, validate_new_password,
     verify_password,
 )
 from backend.common import user_public
@@ -24,6 +25,17 @@ _DUMMY_HASH = hash_password('timing-equaliser-1')
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class ProfileRequest(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    alert_phone: str | None = None
+    current_password: str | None = None
+
+
+PHONE_ALLOWED = re.compile(r'^\+?[\d\s()-]{8,20}$')
+EMAIL_SHAPE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
 class ChangePasswordRequest(BaseModel):
@@ -118,3 +130,44 @@ def change_password(payload: ChangePasswordRequest, db: Session = Depends(get_db
     audit.record(db, user, 'password_changed', user.id)
     db.commit()
     return {'token': create_access_token(user), 'user': user_public(user)}
+
+
+@router.patch('/me/profile')
+def update_profile(payload: ProfileRequest, db: Session = Depends(get_db), user: User = Depends(require_ready_user)):
+    """Staff and peer mentors edit their own name, e-mail and alert number. Student details are managed by the school."""
+    if user.role == 'student':
+        raise HTTPException(status_code=403, detail='Students cannot change their details here. Please ask your school administrator.')
+    changed: list[str] = []
+
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not 2 <= len(name) <= 80:
+            raise HTTPException(status_code=400, detail='Please enter a name between 2 and 80 characters.')
+        if name != user.name:
+            user.name = name
+            changed.append('name')
+
+    if payload.alert_phone is not None:
+        phone = payload.alert_phone.strip()
+        if phone and not PHONE_ALLOWED.match(phone):
+            raise HTTPException(status_code=400, detail='Please enter a valid mobile number, e.g. +91 98765 43210.')
+        if (phone or None) != user.alert_phone:
+            user.alert_phone = phone or None
+            changed.append('alert_phone')
+
+    if payload.email is not None:
+        email = payload.email.strip().lower()
+        if email != user.email:
+            if not EMAIL_SHAPE.match(email):
+                raise HTTPException(status_code=400, detail='Please enter a valid e-mail address.')
+            if not payload.current_password or not verify_password(payload.current_password, user.password_hash):
+                raise HTTPException(status_code=400, detail='Enter your current password to change your e-mail address.')
+            if db.query(User.id).filter(User.email == email, User.id != user.id).first():
+                raise HTTPException(status_code=400, detail='Another account already uses that e-mail address.')
+            user.email = email
+            changed.append('email')
+
+    if changed:
+        audit.record(db, user, 'profile_updated', user.id, {'fields': changed})
+        db.commit()
+    return user_public(user)

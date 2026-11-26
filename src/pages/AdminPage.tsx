@@ -27,7 +27,7 @@ export const AdminPage: React.FC = () => {
       <Card className="p-5 sm:p-6 space-y-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            {isAdmin ? 'School administration' : 'School overview'}
+            {isAdmin ? 'School Administrator & Principal Overview' : 'School Admin Overview'}
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             {publicSettings?.school_name}: {isAdmin ? 'school-wide statistics, accounts, settings and audit trail.' : 'school-wide wellbeing statistics.'}

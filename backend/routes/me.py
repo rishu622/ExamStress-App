@@ -13,6 +13,7 @@ from backend.services import audit, language, scoring
 from backend.services.app_settings import get_settings, zone_for_score
 from backend.services.notify import create_alert
 from backend.services.voice import VoiceAnalysisError, deviation_from_baseline, extract_features
+from backend.services.voice_quality import strain as vocal_strain
 
 router = APIRouter(dependencies=[Depends(require_ready_user)])
 student_only = require_roles('student')
@@ -125,6 +126,12 @@ async def create_checkin(
     cues = language.detect_cues(note_text) if note_text else []
     self_score = scoring.self_report_score(mood, stress, sleep)
     score = scoring.combine(self_score, cues, crisis, deviation)
+    strain = vocal_strain(features['quality'], features['pitch_hz']) if features else None
+    if strain:
+        # A crying / trembling voice can only lower the score, like every other signal.
+        score = max(0, score - int(round(strain['index'] * 15)))
+        if strain['possible_crying']:
+            score = min(score, 45)
     values = get_settings(db)
     zone = zone_for_score(score, values)
 

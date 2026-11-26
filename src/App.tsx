@@ -11,6 +11,7 @@ import { AdminPage } from './pages/AdminPage';
 import { StudentPortalPage } from './pages/StudentPortalPage';
 import { AccountPage } from './pages/AccountPage';
 import { GuestPage } from './pages/GuestPage';
+import { SimulatorPage } from './pages/SimulatorPage';
 
 const MainLayout: React.FC = () => {
   const { user, authLoading, activePage, isGuest } = useApp();
@@ -33,6 +34,8 @@ const MainLayout: React.FC = () => {
     switch (activePage) {
       case 'dashboard':
         return <DashboardPage />;
+      case 'simulator':
+        return <SimulatorPage />;
       case 'peer-chat':
         return <PeerChatPage />;
       case 'admin':

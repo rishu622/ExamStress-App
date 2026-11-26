@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import relationship
 
 from backend.database import Base
@@ -38,6 +38,8 @@ class User(Base):
     last_login_at = Column(DateTime, nullable=True)
     # Incremented to invalidate all existing tokens (password change, deactivation).
     token_version = Column(Integer, default=0, nullable=False)
+    # Staff only: mobile number for urgent alert texts (shown in settings, never to students).
+    alert_phone = Column(String, nullable=True)
 
 
 class CheckIn(Base):
@@ -128,6 +130,15 @@ class Message(Base):
     flagged = Column(Boolean, default=False, nullable=False)
     flag_reason = Column(String, nullable=True)
     created_at = Column(DateTime, default=utcnow, index=True, nullable=False)
+
+
+class VoiceNote(Base):
+    """Audio attached to a peer-chat message. Deleted with its conversation (retention / account erase)."""
+    __tablename__ = 'voice_notes'
+
+    message_id = Column(String, ForeignKey('messages.id', ondelete='CASCADE'), primary_key=True)
+    data = Column(LargeBinary, nullable=False)  # 16 kHz mono WAV
+    duration_s = Column(Float, nullable=False)
 
 
 class Setting(Base):

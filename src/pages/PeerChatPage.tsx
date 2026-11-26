@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageSquareHeart, Send, ShieldCheck, PhoneCall, Plus, ArrowLeft, Flag, XCircle, Loader2, UserSearch, MessagesSquare } from 'lucide-react';
+import { MessageSquareHeart, Send, ShieldCheck, PhoneCall, Plus, ArrowLeft, Flag, XCircle, Loader2, UserSearch, MessagesSquare, Award, Lock, Bot } from 'lucide-react';
+import { VoiceNoteButton, VoiceNotePlayer } from '../components/chat/VoiceNote';
 import { useApp } from '../context/AppContext';
 import { api, errorMessage } from '../lib/api';
 import { formatTime, timeAgo } from '../lib/format';
@@ -19,6 +20,7 @@ export const PeerChatPage: React.FC = () => {
   const [listError, setListError] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [moderation, setModeration] = useState({ flagged: 0, redacted: 0 });
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -46,8 +48,9 @@ export const PeerChatPage: React.FC = () => {
   const loadMessages = useCallback(async (id: string, quiet = false) => {
     if (!quiet) setLoadingMessages(true);
     try {
-      const data = await api.get<{ messages: ChatMessage[] }>(`/api/chat/conversations/${id}/messages`);
+      const data = await api.get<{ messages: ChatMessage[]; moderation?: { flagged: number; redacted: number } }>(`/api/chat/conversations/${id}/messages`);
       setMessages(data.messages);
+      setModeration(data.moderation ?? { flagged: 0, redacted: 0 });
     } catch (err) {
       if (!quiet) notify(errorMessage(err), 'error');
     } finally {
@@ -93,6 +96,14 @@ export const PeerChatPage: React.FC = () => {
     } finally {
       setSending(false);
     }
+  };
+
+  const sendVoice = async (wav: Blob) => {
+    if (!activeId) return;
+    const form = new FormData();
+    form.append('audio', wav, 'voice-note.wav');
+    await api.post(`/api/chat/conversations/${activeId}/voice`, form);
+    await Promise.all([loadMessages(activeId, true), loadConversations()]);
   };
 
   const startConversation = async (e: React.FormEvent) => {
@@ -151,9 +162,9 @@ export const PeerChatPage: React.FC = () => {
       <Card className="p-5 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">Peer support chat</h1>
+            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">Anonymous Student Peer Support Chat</h1>
             <span className="px-2.5 py-0.5 text-xs font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 rounded-full inline-flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5" /> Anonymous
+              <ShieldCheck className="w-3.5 h-3.5" /> Safety moderation active
             </span>
           </div>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
@@ -174,7 +185,18 @@ export const PeerChatPage: React.FC = () => {
       {listError && <ErrorBox message={listError} onRetry={loadConversations} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 lg:h-[640px]">
-        <Card className={`lg:col-span-4 p-3 sm:p-4 flex flex-col min-h-0 ${activeId ? 'hidden lg:flex' : 'flex'}`}>
+        <div className={`lg:col-span-4 flex-col gap-4 min-h-0 ${activeId ? 'hidden lg:flex' : 'flex'}`}>
+        <Card className="p-4 flex items-center gap-3">
+          <div className="w-11 h-11 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shrink-0"><Award className="w-6 h-6" /></div>
+          <div className="min-w-0">
+            <p className="text-xs font-extrabold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">Mental Health Ambassadors</p>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              {user?.role === 'peer-mentor' ? 'You are a trained senior peer mentor' : 'Trained senior student peer mentors'}
+              {conversations ? ` · ${conversations.length} conversation${conversations.length === 1 ? '' : 's'}${isStudent ? '' : ' supported'}` : ''}
+            </p>
+          </div>
+        </Card>
+        <Card className="p-3 sm:p-4 flex flex-col min-h-0 flex-1">
           <div className="flex gap-1.5 mb-3">
             {(['active', 'closed'] as const).map(f => (
               <button
@@ -222,6 +244,7 @@ export const PeerChatPage: React.FC = () => {
             )}
           </div>
         </Card>
+        </div>
 
         <Card className={`lg:col-span-8 flex flex-col overflow-hidden min-h-[70vh] lg:min-h-0 ${activeId ? 'flex' : 'hidden lg:flex'}`}>
           {!active ? (
@@ -238,9 +261,13 @@ export const PeerChatPage: React.FC = () => {
                   <div className="min-w-0">
                     <h2 className="font-bold text-sm text-slate-900 dark:text-white truncate">{isStudent ? active.topic ?? 'Conversation with a peer mentor' : active.alias}</h2>
                     <span className="text-[11px] text-slate-500">{isStudent ? `You appear as "${active.alias}"` : active.topic ?? 'No topic'}</span>
+                    <span className="block text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold"><Lock className="w-3 h-3 inline -mt-0.5" /> Anonymous · moderated</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="hidden md:inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-mono text-slate-500 bg-slate-100 dark:bg-slate-800" title="Messages flagged for counselor review / contact details removed">
+                    <Bot className="w-3.5 h-3.5" /> Moderation: {moderation.flagged + moderation.redacted} {moderation.flagged + moderation.redacted === 1 ? 'action' : 'actions'}
+                  </span>
                   {user.role === 'counselor' && active.student_id && (
                     <button
                       onClick={() => { setSelectedStudentId(active.student_id); setActivePage('dashboard'); }}
@@ -288,7 +315,9 @@ export const PeerChatPage: React.FC = () => {
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-sm'
                           } ${msg.flagged ? 'ring-2 ring-rose-400' : ''}`}
                         >
-                          {msg.body}
+                          {msg.voice_seconds ? (
+                            <VoiceNotePlayer messageId={msg.id} seconds={msg.voice_seconds} mine={msg.is_mine} onError={m => notify(m, 'error')} />
+                          ) : msg.body}
                         </div>
                         {msg.flagged && <span className="text-[10px] font-bold text-rose-600 px-1">Flagged for counselor review</span>}
                       </div>
@@ -303,6 +332,7 @@ export const PeerChatPage: React.FC = () => {
                   <p className="text-xs text-center text-slate-500">This conversation is closed.{isStudent && ' Start a new one any time.'}</p>
                 ) : (
                   <form onSubmit={send} className="flex items-end gap-2">
+                    <VoiceNoteButton disabled={sending} onRecorded={sendVoice} onError={m => notify(m, 'error')} />
                     <textarea
                       value={draft}
                       onChange={e => setDraft(e.target.value)}

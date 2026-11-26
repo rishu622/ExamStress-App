@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { timeAgo } from '../../lib/format';
+import { ROLE_LABELS, timeAgo } from '../../lib/format';
 import { errorMessage } from '../../lib/api';
-import { Bell, Search, Moon, Sun, CheckCheck, AlertTriangle, ShieldAlert, Menu } from 'lucide-react';
+import { Bell, Search, Moon, Sun, CheckCheck, AlertTriangle, ShieldAlert, Menu, CalendarDays } from 'lucide-react';
 
 export const Topbar: React.FC<{ onMenu: () => void }> = ({ onMenu }) => {
   const {
@@ -23,6 +23,11 @@ export const Topbar: React.FC<{ onMenu: () => void }> = ({ onMenu }) => {
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const isStaff = user?.role === 'counselor' || user?.role === 'admin';
+  const [today, setToday] = useState(() => new Date());
+  useEffect(() => {
+    const t = window.setInterval(() => setToday(new Date()), 60000);
+    return () => window.clearInterval(t);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -52,14 +57,17 @@ export const Topbar: React.FC<{ onMenu: () => void }> = ({ onMenu }) => {
         <button onClick={onMenu} className="lg:hidden p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Open menu">
           <Menu className="w-5 h-5" />
         </button>
-        {isStaff && activePage === 'dashboard' && (
+        {isStaff && (
           <div className="relative w-full">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="search"
               placeholder="Search student ID or class…"
               value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
+              onChange={e => {
+                setSearchQuery(e.target.value);
+                if (activePage !== 'dashboard' && e.target.value.trim()) setActivePage('dashboard');
+              }}
               aria-label="Search students"
               className="w-full pl-9 pr-4 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue dark:text-white transition"
             />
@@ -68,6 +76,16 @@ export const Topbar: React.FC<{ onMenu: () => void }> = ({ onMenu }) => {
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2">
+        <span className="hidden xl:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300">
+          <CalendarDays className="w-4 h-4 text-brand-blue" />
+          {today.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+        </span>
+        {user && (
+          <span className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs" title="Your role is set by your account">
+            <span className="font-bold text-slate-400 uppercase text-[10px]">Role</span>
+            <span className="font-bold text-brand-blue">{ROLE_LABELS[user.role]}</span>
+          </span>
+        )}
         {isStaff && (
           <div className="relative" ref={panelRef}>
             <button

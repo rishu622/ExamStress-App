@@ -9,6 +9,7 @@ import type { CheckInResult, StudentSummary } from '../types';
 import { Card, ErrorBox, Modal, Spinner, dangerButton, primaryButton, secondaryButton } from '../components/common/ui';
 import { VoiceRecorder } from '../components/student/VoiceRecorder';
 import { SCALE_EMOJI, ScalePicker } from '../components/student/ScalePicker';
+import { WellbeingInsights } from '../components/student/WellbeingInsights';
 
 const ConsentCard: React.FC<{ onAccepted: () => void }> = ({ onAccepted }) => {
   const { user, updateUser, notify, publicSettings } = useApp();
@@ -130,7 +131,7 @@ export const StudentPortalPage: React.FC = () => {
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <button onClick={() => setActivePage('peer-chat')} className="px-4 py-2.5 bg-white text-brand-blue font-bold text-sm rounded-2xl shadow-md hover:bg-slate-50 transition inline-flex items-center gap-2">
-            <MessageSquareHeart className="w-4 h-4" /> Talk to a peer mentor
+            <MessageSquareHeart className="w-4 h-4" /> Talk to a Senior Peer Mentor
           </button>
           <button onClick={() => { setHelpSent(false); setHelpOpen(true); }} className="px-4 py-2.5 bg-rose-600 text-white font-bold text-sm rounded-2xl shadow-md hover:bg-rose-700 transition inline-flex items-center gap-2">
             <PhoneCall className="w-4 h-4" /> I need help now
@@ -217,6 +218,8 @@ export const StudentPortalPage: React.FC = () => {
               </form>
             </Card>
           )}
+
+          <WellbeingInsights summary={summary} />
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Card className="p-5">

@@ -14,6 +14,7 @@ export interface User {
   consent_given: boolean;
   created_at: string;
   last_login_at: string | null;
+  alert_phone: string | null;
 }
 
 export interface PublicSettings {
@@ -181,6 +182,8 @@ export interface ChatMessage {
   is_mine: boolean;
   body: string;
   flagged: boolean;
+  flag_reason: string | null;
+  voice_seconds: number | null;
   created_at: string;
 }
 
@@ -215,4 +218,58 @@ export interface AuditEntry {
   action: string;
   target: string | null;
   details: string | null;
+}
+
+export interface AttendanceFeatures {
+  duration_s: number;
+  energy_db: number;
+  pause_ratio: number;
+  pitch_hz: number | null;
+  pitch_variability_st: number | null;
+  onset_latency_ms: number;
+  speech_rate_wpm: number | null;
+  syllables: number;
+  quality: VoiceQuality;
+}
+
+export interface VoiceQuality {
+  jitter_st: number | null;
+  shimmer_db: number | null;
+  hnr_db: number | null;
+  voice_breaks: number;
+  voice_breaks_per_s: number;
+  pitch_jumps: number;
+  pitch_range_st: number | null;
+  pitch_max_hz: number | null;
+  sob_bursts_per_s: number;
+  periodic_ratio: number;
+}
+
+export interface VocalStrain {
+  index: number;
+  label: string;
+  possible_crying: boolean;
+  contributors: { label: string; weight: number }[];
+}
+
+export interface AttendanceAnalysis {
+  label: string | null;
+  features: AttendanceFeatures;
+  score: number;
+  zone: RiskZone;
+  markers: { label: string; penalty: number }[];
+  absolutist_words: string[];
+  transcript: string | null;
+  crisis_language: boolean;
+  summary: string;
+  short_clip: boolean;
+  vocal_strain: VocalStrain | null;
+  norms: {
+    pitch_hz: [number, number];
+    speech_rate_wpm: [number, number];
+    onset_latency_ms: number;
+    energy_db: number;
+    pitch_variability_st: number;
+  };
+  thresholds: { green: number; yellow: number; orange: number };
 }

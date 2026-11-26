@@ -1,23 +1,27 @@
 import secrets
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.auth import require_ready_user, require_roles
 from backend.common import iso
 from backend.database import get_db
-from backend.models import Conversation, Message, User, utcnow
+from backend.models import Conversation, Message, User, VoiceNote, utcnow
 from backend.services import audit, language
 from backend.services.app_settings import get_settings
 from backend.services.notify import create_alert
+from backend.services.voice import VoiceAnalysisError, _read_wav
 
 router = APIRouter(dependencies=[Depends(require_ready_user)])
 chat_user = require_roles('student', 'peer-mentor', 'counselor')
 responder = require_roles('peer-mentor', 'counselor')
 
 MAX_MESSAGE_LENGTH = 1500
+MAX_VOICE_NOTE_SECONDS = 60
+MAX_VOICE_NOTE_BYTES = 3 * 1024 * 1024
 ADJECTIVES = ['Blue', 'Calm', 'Bright', 'Gentle', 'Quiet', 'Brave', 'Kind', 'Steady', 'Sunny', 'Silver', 'Green', 'Golden']
 ANIMALS = ['Owl', 'Panda', 'Otter', 'Falcon', 'Dolphin', 'Fox', 'Koala', 'Robin', 'Tiger', 'Heron', 'Deer', 'Sparrow']
 
@@ -152,6 +156,9 @@ def get_messages(conv_id: str, after: str | None = None, db: Session = Depends(g
         except ValueError as exc:
             raise HTTPException(status_code=400, detail='Invalid "after" timestamp.') from exc
     messages = query.order_by(Message.created_at).limit(500).all()
+    voice = dict(
+        db.query(VoiceNote.message_id, VoiceNote.duration_s).filter(VoiceNote.message_id.in_([m.id for m in messages])).all()
+    ) if messages else {}
     staff_ids = {m.sender_id for m in messages if m.sender_role == 'counselor' and m.sender_id}
     names = dict(db.query(User.id, User.name).filter(User.id.in_(staff_ids)).all()) if staff_ids else {}
     return {
@@ -163,8 +170,14 @@ def get_messages(conv_id: str, after: str | None = None, db: Session = Depends(g
             'is_mine': m.sender_id == user.id,
             'body': m.body,
             'flagged': m.flagged if user.role != 'student' else False,
+            'flag_reason': m.flag_reason if user.role != 'student' else None,
+            'voice_seconds': voice.get(m.id),
             'created_at': iso(m.created_at),
         } for m in messages],
+        'moderation': {
+            'flagged': sum(1 for m in messages if m.flagged),
+            'redacted': sum(1 for m in messages if m.flag_reason == 'contact_details'),
+        },
     }
 
 
@@ -174,6 +187,45 @@ def send_message(conv_id: str, payload: MessageRequest, background: BackgroundTa
     _store_message(db, background, conv, user, payload.body)
     db.commit()
     return {'message': 'Sent.'}
+
+
+@router.post('/conversations/{conv_id}/voice', status_code=201)
+async def send_voice_note(conv_id: str, audio: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(chat_user)):
+    conv = _get_conversation(db, conv_id, user)
+    if conv.status == 'closed':
+        raise HTTPException(status_code=400, detail='This conversation has been closed. Please start a new one.')
+    data = await audio.read()
+    if len(data) > MAX_VOICE_NOTE_BYTES:
+        raise HTTPException(status_code=413, detail=f'Voice notes are limited to {MAX_VOICE_NOTE_SECONDS} seconds.')
+    try:
+        samples, rate = _read_wav(data)
+    except VoiceAnalysisError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    seconds = len(samples) / rate
+    if seconds < 0.5:
+        raise HTTPException(status_code=400, detail='That voice note is too short.')
+    if seconds > MAX_VOICE_NOTE_SECONDS + 1:
+        raise HTTPException(status_code=413, detail=f'Voice notes are limited to {MAX_VOICE_NOTE_SECONDS} seconds.')
+    whole = int(round(seconds))
+    msg = Message(conversation_id=conv.id, sender_id=user.id, sender_role=user.role, body=f'[Voice note {whole // 60}:{whole % 60:02d}]')
+    db.add(msg)
+    db.flush()
+    db.add(VoiceNote(message_id=msg.id, data=data, duration_s=round(seconds, 1)))
+    conv.updated_at = utcnow()
+    db.commit()
+    return {'message': 'Sent.', 'id': msg.id}
+
+
+@router.get('/messages/{message_id}/voice')
+def get_voice_note(message_id: str, db: Session = Depends(get_db), user: User = Depends(chat_user)):
+    msg = db.get(Message, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail='Voice note not found.')
+    _get_conversation(db, msg.conversation_id, user)  # same access rules as the conversation
+    note = db.get(VoiceNote, message_id)
+    if not note:
+        raise HTTPException(status_code=404, detail='Voice note not found.')
+    return Response(content=note.data, media_type='audio/wav', headers={'Cache-Control': 'private, no-store'})
 
 
 @router.post('/conversations/{conv_id}/crisis')

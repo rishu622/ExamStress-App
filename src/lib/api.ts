@@ -84,7 +84,22 @@ async function request<T>(method: string, path: string, body?: Body): Promise<T>
   return data as T;
 }
 
+/** Fetches binary content (e.g. a voice note) with the session token, for use in an object URL. */
+async function getBlob(path: string): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}${path}`, { headers });
+  } catch {
+    throw new ApiError(0, 'Cannot reach the server. Please check your internet connection and try again.');
+  }
+  if (!response.ok) throw new ApiError(response.status, response.status === 404 ? 'This recording is no longer available.' : `Request failed (${response.status}).`);
+  return response.blob();
+}
+
 export const api = {
+  getBlob,
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: Body) => request<T>('POST', path, body ?? {}),
   put: <T>(path: string, body: Body) => request<T>('PUT', path, body),

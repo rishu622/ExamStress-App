@@ -11,9 +11,9 @@ import backend.models  # noqa: F401  (registers tables)
 from backend.auth import hash_password
 from backend.common import user_public
 from backend.config import settings, validate_production_settings
-from backend.database import Base, SessionLocal, engine
+from backend.database import Base, SessionLocal, engine, upgrade_schema
 from backend.models import User
-from backend.routes import admin, alerts, auth, chat, guest, me, students, users
+from backend.routes import admin, alerts, auth, chat, guest, me, students, users, voice
 from backend.services.retention import purge_expired
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
@@ -51,6 +51,7 @@ async def retention_loop() -> None:
 async def lifespan(_: FastAPI):
     validate_production_settings()
     Base.metadata.create_all(bind=engine)
+    upgrade_schema()
     bootstrap_admin()
     task = asyncio.create_task(retention_loop())
     yield
@@ -97,6 +98,7 @@ app.include_router(students.router, prefix='/api/students', tags=['students'])
 app.include_router(alerts.router, prefix='/api/alerts', tags=['alerts'])
 app.include_router(chat.router, prefix='/api/chat', tags=['chat'])
 app.include_router(guest.router, prefix='/api/guest', tags=['guest'])
+app.include_router(voice.router, prefix='/api/voice', tags=['voice'])
 app.include_router(admin.router, prefix='/api', tags=['admin'])
 
 

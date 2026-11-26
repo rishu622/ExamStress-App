@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bell, ShieldAlert, AlertTriangle, TrendingUp, TrendingDown, Minus, Eye, CheckCircle2, Users, RefreshCw, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Bell, ShieldAlert, AlertTriangle, TrendingUp, TrendingDown, Minus, Eye, CheckCircle2, Users, RefreshCw, ShieldCheck, AlertCircle, Mic, Sparkles } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
 import { useApp } from '../context/AppContext';
 import { api, errorMessage } from '../lib/api';
 import { ZONE_COLORS, timeAgo } from '../lib/format';
-import type { OverviewStats, RiskZone, StudentRow } from '../types';
+import type { OverviewStats, RiskZone, SchoolSettings, StudentRow } from '../types';
+import { suggestIntervention } from '../lib/interventions';
 import { Card, EmptyState, ErrorBox, Spinner } from '../components/common/ui';
 import { RiskBadge } from '../components/common/RiskBadge';
 import { StudentDetailModal } from '../components/dashboard/StudentDetailModal';
@@ -31,7 +32,20 @@ const Sparkline: React.FC<{ values: number[]; zone: RiskZone | null }> = ({ valu
 };
 
 export const DashboardPage: React.FC = () => {
-  const { alerts, unreadAlertCount, setSelectedStudentId, selectedStudentId, searchQuery, resolveAlert, markAlertRead, notify, dataVersion, refreshAlerts } = useApp();
+  const { alerts, unreadAlertCount, setSelectedStudentId, selectedStudentId, searchQuery, resolveAlert, markAlertRead, notify, dataVersion, refreshAlerts, setActivePage } = useApp();
+  const [thresholds, setThresholds] = useState({ green: 70, yellow: 50, orange: 30 });
+
+  useEffect(() => {
+    api.get<SchoolSettings>('/api/settings')
+      .then(v => setThresholds({ green: v.threshold_green_min, yellow: v.threshold_yellow_min, orange: v.threshold_orange_min }))
+      .catch(() => undefined);
+  }, []);
+  const ranges: Record<RiskZone, string> = {
+    green: `${thresholds.green} - 100`,
+    yellow: `${thresholds.yellow} - ${thresholds.green - 1}`,
+    orange: `${thresholds.orange} - ${thresholds.yellow - 1}`,
+    red: `0 - ${thresholds.orange - 1}`,
+  };
   const [students, setStudents] = useState<StudentRow[] | null>(null);
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [error, setError] = useState('');
@@ -107,10 +121,20 @@ export const DashboardPage: React.FC = () => {
               ? `${stats.total_students} student${stats.total_students === 1 ? '' : 's'} ·${stats.active_this_week} checked in this week · ${stats.consented_students} opted in`
               : 'Loading school data…'}
           </p>
+          {students && (
+            <p className="text-xs text-slate-400 mt-1">
+              Green ({counts.green}), Yellow ({counts.yellow}), Orange ({counts.orange}), Red ({counts.red}){counts.none ? `, no check-ins (${counts.none})` : ''}.
+            </p>
+          )}
         </div>
-        <button onClick={() => { load(); refreshAlerts(); }} disabled={refreshing} className="self-start md:self-auto inline-flex items-center gap-2 px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 disabled:opacity-60">
-          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
-        </button>
+        <div className="flex flex-wrap gap-2 self-start md:self-auto">
+          <button onClick={() => { load(); refreshAlerts(); }} disabled={refreshing} className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 disabled:opacity-60">
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+          <button onClick={() => setActivePage('simulator')} className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold rounded-xl bg-brand-blue text-white hover:bg-blue-600">
+            <Mic className="w-4 h-4" /> Launch Attendance Simulator
+          </button>
+        </div>
       </Card>
 
       {error && <ErrorBox message={error} onRetry={load} />}
@@ -124,13 +148,19 @@ export const DashboardPage: React.FC = () => {
               filter === zone ? 'border-brand-blue ring-2 ring-brand-blue/30' : 'border-slate-200 dark:border-slate-800'
             }`}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className={`p-2 rounded-xl ${tone}`}><Icon className="w-4 h-4" /></span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-500">{ranges[zone]}</span>
+            </div>
+            <div className="mt-2 flex items-end justify-between gap-2">
               <span className="text-2xl sm:text-3xl font-extrabold font-mono" style={{ color: ZONE_COLORS[zone] }}>
                 {students ? counts[zone] : '–'}
               </span>
+              {students && students.length > 0 && (
+                <span className="text-xs font-semibold text-slate-500">{Math.round((counts[zone] / students.length) * 100)}% of students</span>
+              )}
             </div>
-            <p className="mt-2 text-sm font-bold text-slate-800 dark:text-slate-100 capitalize">{zone} zone</p>
+            <p className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100 capitalize">{zone} zone</p>
             <p className="text-xs text-slate-500">{title}</p>
           </button>
         ))}
@@ -174,6 +204,8 @@ export const DashboardPage: React.FC = () => {
                     <th className="text-left font-bold px-4 py-2.5">Zone</th>
                     <th className="text-left font-bold px-4 py-2.5 hidden sm:table-cell">Trend</th>
                     <th className="text-left font-bold px-4 py-2.5 hidden md:table-cell">Last check-in</th>
+                    <th className="text-left font-bold px-4 py-2.5 hidden md:table-cell">Days in zone</th>
+                    <th className="text-left font-bold px-4 py-2.5 hidden xl:table-cell">Suggested intervention</th>
                     <th className="px-4 py-2.5" />
                   </tr>
                 </thead>
@@ -200,6 +232,10 @@ export const DashboardPage: React.FC = () => {
                       <td className="px-4 py-3 text-xs text-slate-500 hidden md:table-cell">
                         {timeAgo(s.last_checkin_at)}
                         {s.last_contacted_at && <div className="text-emerald-600">Contacted {timeAgo(s.last_contacted_at)}</div>}
+                      </td>
+                      <td className="px-4 py-3 text-xs font-mono text-slate-600 dark:text-slate-300 hidden md:table-cell">{s.zone ? `${s.days_in_zone}d` : '—'}</td>
+                      <td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300 hidden xl:table-cell max-w-56">
+                        <span className="inline-flex items-start gap-1.5"><Sparkles className="w-3.5 h-3.5 text-brand-blue shrink-0 mt-0.5" />{suggestIntervention(s)}</span>
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="inline-flex items-center gap-1 text-xs font-semibold text-brand-blue">

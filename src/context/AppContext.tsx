@@ -2,10 +2,11 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import type { Alert, PublicSettings, User, UserRole } from '../types';
 import { api, getToken, setToken, setUnauthorizedHandler } from '../lib/api';
 
-export type ActivePage = 'dashboard' | 'peer-chat' | 'admin' | 'student-portal' | 'account';
+export type ActivePage = 'dashboard' | 'simulator' | 'peer-chat' | 'admin' | 'student-portal' | 'account';
 
 export const PAGE_ROLES: Record<ActivePage, UserRole[]> = {
   dashboard: ['counselor', 'admin'],
+  simulator: ['counselor', 'admin'],
   admin: ['admin', 'counselor'],
   'peer-chat': ['student', 'peer-mentor', 'counselor'],
   'student-portal': ['student'],
